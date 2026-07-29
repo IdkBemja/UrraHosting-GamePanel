@@ -76,12 +76,20 @@ jobs:
           push: false
           tags: urrahosting/gamepanel-runtime:ci-${{ github.sha }}
 
+      # load: true (unlike the game-runtime build above) because the SBOM
+      # step right after this needs the image in the local Docker daemon -
+      # buildx's default output for a `push: false` build stays inside the
+      # builder itself and is never loaded anywhere, so without this, syft
+      # finds nothing locally and falls through to pulling
+      # urrahosting/gamepanel-dashboard from Docker Hub instead, which
+      # doesn't exist there and fails with an auth error.
       - name: Build dashboard image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: dashboard/Dockerfile
           push: false
+          load: true
           tags: urrahosting/gamepanel-dashboard:ci-${{ github.sha }}
 
       - name: Generate SBOM (dashboard image)
