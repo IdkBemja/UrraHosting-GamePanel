@@ -45,7 +45,7 @@ def _install_terraria(dashboard_client, monkeypatch):
             url="https://terraria.org/x.zip", filename="x.zip", install_kind="zip", expected_entrypoint="TerrariaServer.bin.x86_64"
         )
 
-    def fake_install(self, game_family, game_edition, game_software, version, channel, actor):
+    def fake_install(self, game_family, game_edition, game_software, version, channel, actor, create_backup=True):
         return InstallResult(
             game_software=game_software,
             game_version=version,
@@ -145,7 +145,7 @@ def test_install_wipes_plugins_belonging_to_old_software(dashboard_client, monke
             url="https://example.test/x.zip", filename="x.zip", install_kind="zip", expected_entrypoint="TerrariaServer.bin.x86_64"
         )
 
-    def fake_install(self, game_family, game_edition, game_software, version, channel, actor):
+    def fake_install(self, game_family, game_edition, game_software, version, channel, actor, create_backup=True):
         return InstallResult(
             game_software=game_software,
             game_version=version,
@@ -193,7 +193,7 @@ def test_install_unexpected_oserror_reports_cleanly(dashboard_client, monkeypatc
             url="https://example.test/x.zip", filename="x.zip", install_kind="zip", expected_entrypoint="TerrariaServer.bin.x86_64"
         )
 
-    def failing_install(self, game_family, game_edition, game_software, version, channel, actor):
+    def failing_install(self, game_family, game_edition, game_software, version, channel, actor, create_backup=True):
         raise OSError(13, "Permission denied")
 
     with dashboard_client.application.app_context():
