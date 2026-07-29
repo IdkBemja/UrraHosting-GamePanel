@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest pytest-cov -r tests/requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check config runtime dashboard tests --line-length 140
+
+      - name: Ruff format check
+        run: ruff format --check config runtime dashboard tests --line-length 140
+
+      - name: pytest with coverage
+        run: pytest tests/ -q --cov=config --cov=runtime --cov=dashboard/app --cov-report=term-missing --cov-fail-under=70
+
+      - name: pip-audit (dependency vulnerabilities)
+        run: |
+          pip install pip-audit
+          pip-audit -r dashboard/requirements.txt || true
+
+  compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate a throwaway .env.test
+        run: cp .env.example .env.test && echo "TRAEFIK_PUBLIC_NETWORK=traefik-public" >> .env.test
+
+      - name: Validate base compose
+        run: docker compose --env-file .env.test -f compose.yml config -q
+
+      - name: Validate base + dev overlay (no external network required)
+        run: docker compose --env-file .env.test -f compose.yml -f compose.dev.yml config -q
+
+      - name: Validate base + traefik overlay (declares external network, does not create it)
+        run: docker compose --env-file .env.test -f compose.yml -f compose.traefik.yml config -q
+
+  build-images:
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, compose-config]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Built here to catch Dockerfile regressions early; not pushed anywhere
+      # and never tagged `latest` (plan.md section 9: "No usar latest en CI
+      # de release"). A full smoke boot (start + healthcheck) is documented
+      # in plan.md section 9 as a manual/staging step, since it needs real
+      # network access to download game server binaries.
+      - name: Build game-runtime image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: urrahosting/gamepanel-runtime:ci-${{ github.sha }}
+
+      - name: Build dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: dashboard/Dockerfile
+          push: false
+          tags: urrahosting/gamepanel-dashboard:ci-${{ github.sha }}
+
+      - name: Generate SBOM (dashboard image)
+        uses: anchore/sbom-action@v0
+        with:
+          image: urrahosting/gamepanel-dashboard:ci-${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-dashboard.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-dashboard
+          path: sbom-dashboard.spdx.json
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy filesystem scan (secrets + known-vulnerable deps)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"

@@ -1,0 +1,241 @@
+name: game-${INSTANCE_ID}
+
+# RCON/the control agent never get a `ports:` entry anywhere in this file:
+# they must only be reachable on the internal network, from the dashboard
+# and docker-proxy containers of THIS instance. Two instances started from
+# two copies of this template (or two `--env-file`s) use different
+# INSTANCE_ID values, so their networks/container names never collide.
+#
+# Every contract variable is passed via `environment:` + interpolation
+# (the x-instance-env anchor below), never via `env_file: .env` - env_file
+# is a literal path baked into this file and would NOT respect
+# `docker compose --env-file other.env up`, silently reusing the real
+# ./.env's secrets for a second instance launched that way.
+x-instance-env: &instance-env
+  INSTANCE_ID: ${INSTANCE_ID}
+  DATA_DIR: ${DATA_DIR}
+  GAME_FAMILY: ${GAME_FAMILY}
+  GAME_EDITION: ${GAME_EDITION:-}
+  GAME_SOFTWARE: ${GAME_SOFTWARE}
+  GAME_VERSION: ${GAME_VERSION}
+  CHANNEL: ${CHANNEL:-stable}
+  LICENSE_ACCEPTED: ${LICENSE_ACCEPTED}
+  GAME_PORT: ${GAME_PORT}
+  DASHBOARD_PORT: ${DASHBOARD_PORT}
+  PUBLIC_BASE_DOMAIN: ${PUBLIC_BASE_DOMAIN:-}
+  PUBLIC_SERVER_ADDRESS: ${PUBLIC_SERVER_ADDRESS:-}
+  TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
+  WORLD_NAME: ${WORLD_NAME}
+  MAX_PLAYERS: ${MAX_PLAYERS}
+  MOTD: ${MOTD}
+  DIFFICULTY: ${DIFFICULTY:-easy}
+  GAMEMODE: ${GAMEMODE:-survival}
+  ONLINE_MODE: ${ONLINE_MODE:-true}
+  JAVA_VERSION: ${JAVA_VERSION:-auto}
+  RCON_PASSWORD: ${RCON_PASSWORD:-}
+  GAME_CONTROL_TOKEN: ${GAME_CONTROL_TOKEN}
+  APP_USER: ${APP_USER}
+  APP_PASSWORD: ${APP_PASSWORD}
+  APP_SECRET: ${APP_SECRET}
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
+  DEBUG: ${DEBUG}
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB}
+  GAME_CPU_LIMIT: ${GAME_CPU_LIMIT}
+  GAME_CPU_RESERVATION: ${GAME_CPU_RESERVATION}
+  GAME_MEMORY_LIMIT: ${GAME_MEMORY_LIMIT}
+  GAME_MEMORY_RESERVATION: ${GAME_MEMORY_RESERVATION}
+  GAME_STORAGE_LIMIT_GB: ${GAME_STORAGE_LIMIT_GB}
+  DASHBOARD_CPU_LIMIT: ${DASHBOARD_CPU_LIMIT}
+  DASHBOARD_MEMORY_LIMIT: ${DASHBOARD_MEMORY_LIMIT}
+
+x-container-hardening: &container-hardening
+  cap_drop: ["ALL"]
+  # Both game-runtime and dashboard start as root (to chown the mounted
+  # data directories) and then drop to a fixed non-root UID via `gosu`
+  # before running any application code (see runtime/entrypoint.sh and
+  # dashboard/Dockerfile's CMD) - `gosu` needs CAP_SETUID/CAP_SETGID to do
+  # that, and CAP_CHOWN to change ownership of files it doesn't itself own.
+  # FOWNER is also required for that same root bootstrap step: entrypoint.sh
+  # chown's DATA_DIR/game to the shared `gamedata` group and then chmod's it
+  # group-writable (g+rwX) plus setgid on every directory, so the dashboard
+  # container - a different uid entirely - can clean up files the game
+  # process left behind on a reinstall; chmod on a file root doesn't own
+  # (which, right after that chown, is every one of them) needs CAP_FOWNER,
+  # not CAP_CHOWN - without it every chmod there fails EPERM, silently
+  # leaving the whole tree read-only to the other side. KILL is also
+  # required: tini (PID 1) stays root the whole time and is what forwards
+  # SIGTERM/SIGINT to the child running as the lower-privileged UID (e.g. on
+  # `docker stop`/`docker restart`) - without it back, `cap_drop: ALL`
+  # strips root of CAP_KILL too and tini's forwarded signal fails with
+  # EPERM, so `docker stop` never actually reaches the app and the
+  # container exits non-zero instead of shutting down cleanly. Nothing else
+  # is added back: no CAP_NET_ADMIN, CAP_SYS_ADMIN, etc.
+  cap_add: ["SETUID", "SETGID", "CHOWN", "FOWNER", "KILL"]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+
+services:
+  game-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GAME_PORT: ${GAME_PORT}
+    container_name: ${INSTANCE_ID}_game_runtime
+    restart: unless-stopped
+    environment:
+      <<: *instance-env
+      GAME_CONTROL_PORT: "8081"
+    # Compose cannot conditionally publish a port mapping based on a
+    # variable's value, so both protocols are published unconditionally on
+    # GAME_PORT (plan.md section 7.1): only the protocol the selected
+    # adapter actually listens on (TCP for Java/Terraria/tModLoader, UDP for
+    # Bedrock) ever receives real traffic; the unused one is simply never
+    # bound inside the container.
+    ports:
+      - "${GAME_PORT}:${GAME_PORT}/tcp"
+      - "${GAME_PORT}:${GAME_PORT}/udp"
+    volumes:
+      - ${DATA_DIR}/game:/data/game
+      - ${DATA_DIR}/plugins:/data/game/plugins
+      - ${DATA_DIR}/mods:/data/game/mods
+      - ${DATA_DIR}/resourcepacks:/data/game/resourcepacks
+      # Read-only: only the dashboard writes instance_override.json (see
+      # config/instance_state.py); game-runtime only ever reads it, at
+      # entrypoint/agent startup, to resolve which adapter/software this
+      # instance currently runs after a reprovision from the Software tab.
+      - ${DATA_DIR}/install:/data/install:ro
+    networks:
+      - internal
+      - public
+    # Protocol-agnostic on purpose: a raw TCP/UDP check cannot reliably tell
+    # "the game finished loading" from "the port is merely bound", and UDP
+    # (Bedrock) has no equivalent of `</dev/tcp/...`. The control agent's
+    # own /health endpoint (runtime/game_control_agent.py) always answers
+    # over HTTP once the child process is confirmed alive, regardless of
+    # which family/edition is running - one healthcheck definition for all.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    stop_grace_period: 60s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    <<: *container-hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "${GAME_CPU_LIMIT}"
+          memory: ${GAME_MEMORY_LIMIT}
+        reservations:
+          cpus: "${GAME_CPU_RESERVATION}"
+          memory: ${GAME_MEMORY_RESERVATION}
+    labels:
+      com.urrahosting.instance: ${INSTANCE_ID}
+      com.urrahosting.role: game-runtime
+
+  # Minimal, scoped Docker API surface for the dashboard. The dashboard
+  # never touches /var/run/docker.sock directly; it talks to this proxy
+  # over the internal network only. EXEC stays disabled: the dashboard
+  # talks to the game's control agent over HTTP instead of `docker exec`.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: ${INSTANCE_ID}_docker_proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      INFO: 1
+      POST: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+      EXEC: 0
+      IMAGES: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      NODES: 0
+      PLUGINS: 0
+      SERVICES: 0
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 0
+      AUTH: 0
+      SECRETS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+    labels:
+      com.urrahosting.instance: ${INSTANCE_ID}
+      com.urrahosting.role: docker-proxy
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+      args:
+        DASHBOARD_PORT: ${DASHBOARD_PORT}
+    container_name: ${INSTANCE_ID}_dashboard
+    restart: unless-stopped
+    environment:
+      <<: *instance-env
+      DOCKER_HOST: tcp://docker-proxy:2375
+      GAME_CONTAINER_NAME: ${INSTANCE_ID}_game_runtime
+      GAME_CONTROL_HOST: game-runtime
+      GAME_CONTROL_PORT: "8081"
+    # No `ports:` here on purpose: the base file assumes Traefik in front
+    # (compose.traefik.yml) so the dashboard is never reachable on a bare
+    # host port/without TLS by default. compose.dev.yml is the only overlay
+    # that publishes it, and only on 127.0.0.1, for local development.
+    volumes:
+      - ${DATA_DIR}/game:/data/game
+      - ${DATA_DIR}/plugins:/data/plugins
+      - ${DATA_DIR}/mods:/data/mods
+      - ${DATA_DIR}/resourcepacks:/data/resourcepacks
+      - ${DATA_DIR}/uploads:/data/uploads
+      - ${DATA_DIR}/backups:/data/backups
+      - ${DATA_DIR}/panel:/data/panel
+      - ${DATA_DIR}/install:/data/install
+    depends_on:
+      - game-runtime
+      - docker-proxy
+    networks:
+      - internal
+      - public
+    <<: *container-hardening
+    deploy:
+      resources:
+        limits:
+          cpus: "${DASHBOARD_CPU_LIMIT}"
+          memory: ${DASHBOARD_MEMORY_LIMIT}
+    labels:
+      com.urrahosting.instance: ${INSTANCE_ID}
+      com.urrahosting.role: dashboard
+
+networks:
+  internal:
+    name: game_${INSTANCE_ID}_internal
+    internal: true
+    labels:
+      com.urrahosting.instance: ${INSTANCE_ID}
+  public:
+    name: game_${INSTANCE_ID}_public
+    labels:
+      com.urrahosting.instance: ${INSTANCE_ID}

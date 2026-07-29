@@ -1,0 +1,36 @@
+# Secrets / local config
+.env
+.env.local
+.env.dev
+.env.test
+*.env
+!.env.example
+
+# Per-instance persistent data (bind mount root)
+instances/
+data/
+
+# Server binaries and installed content (not template code)
+*.jar
+server.jar
+bedrock_server
+TerrariaServer.bin.x86_64
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Claude Code session artifacts
+.claude/
+plan.md

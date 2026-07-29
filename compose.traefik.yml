@@ -1,0 +1,56 @@
+# Uso: docker compose -f compose.yml -f compose.traefik.yml --env-file .env up -d --build
+# Requiere una red externa de Traefik llamada `traefik-public` (configurable
+# via TRAEFIK_PUBLIC_NETWORK) y DNS wildcard *.${PUBLIC_BASE_DOMAIN} hacia
+# el host que ejecuta Traefik.
+#
+# El router HTTP entrega el panel en
+# https://${INSTANCE_ID}.${PUBLIC_BASE_DOMAIN} . El juego NO se enruta via
+# HTTP: Minecraft/Terraria no exponen un hostname que Traefik pueda usar
+# para multiplexar varias instancias en el mismo entrypoint (no hay SNI de
+# aplicacion), asi que cada instancia necesita su propio
+# entrypoint/puerto TCP o UDP dedicado en Traefik - nunca varios
+# `HostSNI(`*`)` compitiendo en el mismo entrypoint. El DNS SRV de Minecraft
+# solo ayuda a conectar clientes Java a un puerto no estandar; no es
+# aislamiento ni sustituye al entrypoint dedicado.
+#
+# Traefik nunca se une a la red `internal`, y el juego/proxy nunca reciben
+# labels de un rol que no sea el suyo.
+
+services:
+  game-runtime:
+    networks:
+      - traefik-public
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_PUBLIC_NETWORK:-traefik-public}
+      # TCP (Minecraft Java, Terraria, tModLoader). Bedrock is UDP-only and
+      # uses the udp router below instead - both are declared here and
+      # Traefik simply never receives traffic on the one that does not
+      # match the adapter actually listening.
+      traefik.tcp.routers.game-${INSTANCE_ID}.rule: "HostSNI(`*`)"
+      traefik.tcp.routers.game-${INSTANCE_ID}.entrypoints: ${TRAEFIK_GAME_ENTRYPOINT}
+      traefik.tcp.routers.game-${INSTANCE_ID}.service: game-${INSTANCE_ID}
+      traefik.tcp.services.game-${INSTANCE_ID}.loadbalancer.server.port: "${GAME_PORT}"
+      # UDP (Bedrock only). Requires a dedicated UDP entrypoint in Traefik's
+      # static configuration; TRAEFIK_GAME_ENTRYPOINT must point at that
+      # entrypoint when GAME_EDITION=bedrock.
+      traefik.udp.routers.game-${INSTANCE_ID}.entrypoints: ${TRAEFIK_GAME_ENTRYPOINT}
+      traefik.udp.routers.game-${INSTANCE_ID}.service: game-${INSTANCE_ID}
+      traefik.udp.services.game-${INSTANCE_ID}.loadbalancer.server.port: "${GAME_PORT}"
+
+  dashboard:
+    networks:
+      - traefik-public
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_PUBLIC_NETWORK:-traefik-public}
+      traefik.http.routers.panel-${INSTANCE_ID}.rule: "Host(`${INSTANCE_ID}.${PUBLIC_BASE_DOMAIN}`)"
+      traefik.http.routers.panel-${INSTANCE_ID}.entrypoints: ${TRAEFIK_WEB_ENTRYPOINT}
+      traefik.http.routers.panel-${INSTANCE_ID}.tls: "true"
+      traefik.http.routers.panel-${INSTANCE_ID}.service: panel-${INSTANCE_ID}
+      traefik.http.services.panel-${INSTANCE_ID}.loadbalancer.server.port: "${DASHBOARD_PORT}"
+
+networks:
+  traefik-public:
+    external: true
+    name: ${TRAEFIK_PUBLIC_NETWORK:-traefik-public}

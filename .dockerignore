@@ -1,0 +1,16 @@
+.git
+.github
+.claude
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+tests
+instances
+data
+*.env
+!.env.example
+UrraHosting-MinecraftServer
+UrraHosting-WebPanel
+plan.md
+README.md

@@ -1,0 +1,116 @@
+"""Unit tests for game_control_agent.Supervisor's command dispatch and rate
+limiting. `start()` (which actually spawns the game server subprocess) is
+never called here - these tests build a Supervisor and swap in a fake
+`process` object, exactly the seam the real HTTP handler goes through."""
+
+import runtime.game_control_agent as gca
+from tests.conftest import base_env
+
+
+class _FakeProcess:
+    def __init__(self):
+        self.terminated = False
+        self.killed = False
+        self.written = []
+        self._poll_value = None
+
+        class _Stdin:
+            def __init__(self, outer):
+                self._outer = outer
+
+            def write(self, data):
+                self._outer.written.append(data)
+
+            def flush(self):
+                pass
+
+        self.stdin = _Stdin(self)
+
+    def poll(self):
+        return self._poll_value
+
+    def terminate(self):
+        self.terminated = True
+        self._poll_value = 0
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def _make_supervisor(monkeypatch, **env_overrides):
+    env = base_env(**env_overrides)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return gca.Supervisor()
+
+
+def test_rcon_dispatch_calls_rcon_execute(monkeypatch):
+    supervisor = _make_supervisor(monkeypatch)
+    supervisor.process = _FakeProcess()
+
+    monkeypatch.setattr(gca.rcon, "execute", lambda host, port, password, command, timeout: "pong")
+    result = supervisor.send_command("list")
+    assert result == {"ok": True, "output": "pong"}
+
+
+def test_fifo_dispatch_writes_to_stdin(monkeypatch):
+    supervisor = _make_supervisor(
+        monkeypatch,
+        GAME_FAMILY="terraria",
+        GAME_EDITION="",
+        GAME_SOFTWARE="vanilla",
+        GAME_PORT="7777",
+        RCON_PASSWORD="",
+        DIFFICULTY="classic",
+    )
+    supervisor.process = _FakeProcess()
+
+    result = supervisor.send_command("save")
+    assert result == {"ok": True, "submitted": True}
+    assert supervisor.process.written == [b"save\n"]
+
+
+def test_start_with_nothing_installed_does_not_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    supervisor = _make_supervisor(monkeypatch)
+
+    supervisor.start()  # no server.jar in tmp_path yet - must not raise
+
+    assert supervisor.process is None
+    assert supervisor.is_running() is False
+
+
+def test_send_command_when_not_running(monkeypatch):
+    supervisor = _make_supervisor(monkeypatch)
+    supervisor.process = None
+    result = supervisor.send_command("list")
+    assert result["ok"] is False
+
+
+def test_rate_limit_blocks_after_threshold(monkeypatch):
+    supervisor = _make_supervisor(monkeypatch)
+    allowed = [supervisor.check_rate_limit() for _ in range(gca._RATE_LIMIT_MAX + 5)]
+    assert allowed.count(True) == gca._RATE_LIMIT_MAX
+    assert allowed.count(False) == 5
+
+
+def test_graceful_stop_sends_stop_command_then_waits(monkeypatch):
+    supervisor = _make_supervisor(monkeypatch)
+    fake = _FakeProcess()
+    supervisor.process = fake
+
+    sent = []
+
+    def fake_send_command(cmd):
+        sent.append(cmd)
+        fake._poll_value = 0  # simulate the process reacting to the stop command
+        return {"ok": True}
+
+    monkeypatch.setattr(supervisor, "send_command", fake_send_command)
+
+    supervisor.graceful_stop(grace_seconds=5)
+    assert sent == ["stop"]
+    assert fake.terminated is False  # stopped cleanly, no need to force-terminate

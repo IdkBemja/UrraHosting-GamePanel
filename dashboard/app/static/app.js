@@ -1,0 +1,1163 @@
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+
+function authHeaders(extra) {
+  return Object.assign({ "X-CSRFToken": csrfToken }, extra || {});
+}
+
+async function apiFetch(path, options) {
+  const opts = options || {};
+  opts.headers = authHeaders(opts.headers);
+  const response = await fetch(path, opts);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (err) {
+    data = null;
+  }
+  return { ok: response.ok, status: response.status, data };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Tabs                                                                    */
+/* ---------------------------------------------------------------------- */
+
+const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+const tabPanels = new Map(
+  Array.from(document.querySelectorAll(".tab-panel")).map((panel) => [panel.id, panel])
+);
+const tabLoaders = {};
+const loadedTabs = new Set();
+
+function activateTab(name, { focus = false } = {}) {
+  for (const btn of tabButtons) {
+    const isActive = btn.dataset.tab === name;
+    btn.setAttribute("aria-selected", String(isActive));
+    btn.tabIndex = isActive ? 0 : -1;
+    if (isActive && focus) btn.focus();
+  }
+  for (const [id, panel] of tabPanels) {
+    const isActive = id === `tab-${name}`;
+    panel.hidden = !isActive;
+    panel.classList.toggle("is-hidden", !isActive);
+  }
+  if (!loadedTabs.has(name) && tabLoaders[name]) {
+    loadedTabs.add(name);
+    tabLoaders[name]();
+  } else if (tabLoaders[name] && (name === "activity" || name === "software" || name === "backups")) {
+    tabLoaders[name]();
+  }
+}
+
+for (const btn of tabButtons) {
+  btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+}
+
+document.querySelector(".tab-bar")?.addEventListener("keydown", (event) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const currentIndex = tabButtons.findIndex((b) => b.getAttribute("aria-selected") === "true");
+  let nextIndex = currentIndex;
+  if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabButtons.length) % tabButtons.length;
+  if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabButtons.length;
+  if (event.key === "Home") nextIndex = 0;
+  if (event.key === "End") nextIndex = tabButtons.length - 1;
+  event.preventDefault();
+  activateTab(tabButtons[nextIndex].dataset.tab, { focus: true });
+});
+
+/* ---------------------------------------------------------------------- */
+/* Confirm dialog                                                          */
+/* ---------------------------------------------------------------------- */
+
+const confirmDialog = document.getElementById("confirmDialog");
+const confirmDialogTitle = document.getElementById("confirmDialogTitle");
+const confirmDialogBody = document.getElementById("confirmDialogBody");
+const confirmDialogDanger = document.getElementById("confirmDialogDanger");
+const confirmDialogAccept = document.getElementById("confirmDialogAccept");
+const confirmDialogCancel = document.getElementById("confirmDialogCancel");
+let confirmResolver = null;
+let confirmTrigger = null;
+
+function askConfirm(title, message, dangerText) {
+  confirmDialogTitle.textContent = title;
+  confirmDialogBody.textContent = message;
+  if (dangerText) {
+    confirmDialogDanger.textContent = dangerText;
+    confirmDialogDanger.classList.remove("is-hidden");
+  } else {
+    confirmDialogDanger.textContent = "";
+    confirmDialogDanger.classList.add("is-hidden");
+  }
+  confirmDialog.classList.remove("is-hidden");
+  confirmTrigger = document.activeElement;
+  confirmDialogAccept.focus();
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+  });
+}
+
+function closeConfirm(result) {
+  confirmDialog.classList.add("is-hidden");
+  if (confirmResolver) confirmResolver(result);
+  confirmResolver = null;
+  if (confirmTrigger && typeof confirmTrigger.focus === "function") confirmTrigger.focus();
+}
+
+confirmDialogAccept.addEventListener("click", () => closeConfirm(true));
+confirmDialogCancel.addEventListener("click", () => closeConfirm(false));
+confirmDialog.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeConfirm(false);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Overview / status                                                       */
+/* ---------------------------------------------------------------------- */
+
+const statusBadge = document.getElementById("statusBadge");
+const containerStatus = document.getElementById("containerStatus");
+const playersOnline = document.getElementById("playersOnline");
+const uptimeValue = document.getElementById("uptimeValue");
+const actionFeedback = document.getElementById("actionFeedback");
+const commandForm = document.getElementById("commandForm");
+const commandInput = document.getElementById("commandInput");
+const logsBox = document.getElementById("logsBox");
+const clearLogs = document.getElementById("clearLogs");
+const copyLogsBtn = document.getElementById("copyLogs");
+const logsSearch = document.getElementById("logsSearch");
+const autoscrollToggle = document.getElementById("autoscrollToggle");
+
+let uptimeSeconds = null;
+
+function formatDuration(totalSeconds) {
+  if (totalSeconds === null || Number.isNaN(totalSeconds)) return "--:--:--";
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = String(Math.floor(seconds / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
+  const secs = String(seconds % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${secs}`;
+}
+
+function formatBytes(bytes) {
+  if (bytes === null || bytes === undefined) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+function renderUptime() {
+  if (uptimeValue) uptimeValue.textContent = formatDuration(uptimeSeconds);
+}
+
+setInterval(() => {
+  if (uptimeSeconds !== null) {
+    uptimeSeconds += 1;
+    renderUptime();
+  }
+}, 1000);
+
+async function fetchStatus() {
+  const { ok, data } = await apiFetch("/api/status");
+  if (!ok || !data) return;
+
+  if (statusBadge) {
+    statusBadge.textContent = data.running ? "En linea" : "Desconectado";
+    statusBadge.classList.toggle("online", Boolean(data.running));
+    statusBadge.classList.toggle("offline", !data.running);
+  }
+  if (containerStatus) containerStatus.textContent = data.container_status || "unknown";
+  if (playersOnline) {
+    playersOnline.textContent =
+      data.players_online !== null && data.players_max !== null
+        ? `${data.players_online} / ${data.players_max}`
+        : "- / -";
+  }
+  uptimeSeconds = data.running ? data.uptime_seconds : null;
+  renderUptime();
+}
+
+async function loadOverview() {
+  const { ok, data } = await apiFetch("/api/overview");
+  if (!ok || !data) return;
+
+  setText("ovGameFamily", data.game_family);
+  setText("ovGameEdition", data.game_edition || "-");
+  setText("ovServerSoftware", data.game_software);
+  setText("ovGameVersion", data.game_version);
+  setText("ovProtocol", data.protocol ? data.protocol.toUpperCase() : "-");
+  if (data.connection) {
+    const endpoint = data.connection.kind === "domain" ? data.connection.address : `${data.connection.address}:${data.connection.port}`;
+    setText("ovConnectAddress", endpoint);
+    setText("ovConnectHint", data.connection.kind === "domain" ? `Dominio (puerto ${data.connection.port})` : "Direccion IP y puerto del juego");
+  }
+  setText("ovCpuLimit", data.resources ? `${data.resources.game_cpu_limit} vCPU` : "-");
+  setText("ovMemLimit", data.resources ? data.resources.game_memory_limit : "-");
+  if (data.storage) {
+    const used = formatBytes(data.storage.usage_bytes);
+    const quota = data.storage.quota_bytes ? formatBytes(data.storage.quota_bytes) : "sin limite";
+    setText("ovStorage", `${used} / ${quota}`);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Live resource meters (CPU / RAM / storage)                              */
+/* ---------------------------------------------------------------------- */
+
+const resourceMeters = {
+  cpu: { fill: document.getElementById("meterCpuFill"), value: document.getElementById("meterCpuValue"), status: document.getElementById("meterCpuStatus") },
+  ram: { fill: document.getElementById("meterRamFill"), value: document.getElementById("meterRamValue"), status: document.getElementById("meterRamStatus") },
+  storage: { fill: document.getElementById("meterStorageFill"), value: document.getElementById("meterStorageValue"), status: document.getElementById("meterStorageStatus") },
+};
+
+// Thresholds match the meter's fill/status color steps (good/warning/
+// critical) - never the only signal: the status span always carries the
+// word too, since warning/critical tones alone aren't reliably
+// distinguishable for every reader.
+function levelFor(ratio) {
+  if (ratio === null || ratio === undefined || Number.isNaN(ratio)) return { cls: "idle", label: "Sin datos" };
+  if (ratio >= 0.9) return { cls: "critical", label: "Critico" };
+  if (ratio >= 0.7) return { cls: "warning", label: "Alto" };
+  return { cls: "good", label: "Normal" };
+}
+
+function setMeter(meter, ratio, valueText) {
+  if (!meter.fill) return;
+  const level = levelFor(ratio);
+  const width = ratio === null || ratio === undefined || Number.isNaN(ratio) ? 0 : Math.min(100, Math.max(0, ratio * 100));
+  meter.fill.className = `meter-fill level-${level.cls}`;
+  meter.fill.style.width = `${width}%`;
+  meter.value.textContent = valueText;
+  meter.status.className = `meter-status level-${level.cls}`;
+  meter.status.textContent = ratio === null || ratio === undefined || Number.isNaN(ratio) ? level.label : `${level.label} (${Math.round(ratio * 100)}%)`;
+}
+
+async function loadResources() {
+  const { ok, data } = await apiFetch("/api/resources");
+  if (!ok || !data) return;
+
+  if (!data.running) {
+    setMeter(resourceMeters.cpu, null, "Servidor detenido");
+    setMeter(resourceMeters.ram, null, "Servidor detenido");
+  } else {
+    // cpu_percent is 100 per fully-saturated core (docker stats' own
+    // convention), so a 2-vCPU limit tops out at 200%, not 100% - divide by
+    // limit*100 to get the 0-1 ratio the meter needs.
+    const cpuLimitPercent = data.cpu_limit_vcpu ? data.cpu_limit_vcpu * 100 : null;
+    const cpuRatio = cpuLimitPercent && typeof data.cpu_percent === "number" ? data.cpu_percent / cpuLimitPercent : null;
+    const cpuText = typeof data.cpu_percent === "number" ? `${data.cpu_percent.toFixed(1)}% / ${data.cpu_limit_vcpu} vCPU` : "-";
+    setMeter(resourceMeters.cpu, cpuRatio, cpuText);
+
+    const ramRatio = data.memory_limit_bytes && typeof data.memory_usage_bytes === "number" ? data.memory_usage_bytes / data.memory_limit_bytes : null;
+    const ramText = typeof data.memory_usage_bytes === "number" ? `${formatBytes(data.memory_usage_bytes)} / ${formatBytes(data.memory_limit_bytes)}` : "-";
+    setMeter(resourceMeters.ram, ramRatio, ramText);
+  }
+
+  const storageRatio = data.storage_quota_bytes ? data.storage_usage_bytes / data.storage_quota_bytes : null;
+  const storageLimitText = data.storage_quota_bytes ? formatBytes(data.storage_quota_bytes) : "sin limite";
+  setMeter(resourceMeters.storage, storageRatio, `${formatBytes(data.storage_usage_bytes)} / ${storageLimitText}`);
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value === null || value === undefined || value === "" ? "-" : String(value);
+}
+
+async function performAction(action) {
+  if (actionFeedback) {
+    actionFeedback.textContent = `Ejecutando accion: ${action}...`;
+    actionFeedback.classList.remove("error", "ok");
+  }
+
+  if (action === "stop" || action === "restart") {
+    const confirmed = await askConfirm(
+      action === "stop" ? "Detener servidor" : "Reiniciar servidor",
+      action === "stop"
+        ? "El servidor guardara el mundo y se detendra. Los jugadores conectados seran desconectados."
+        : "El servidor se detendra y volvera a iniciar. Los jugadores conectados seran desconectados brevemente."
+    );
+    if (!confirmed) {
+      if (actionFeedback) actionFeedback.textContent = "";
+      return;
+    }
+  }
+
+  const { ok, data } = await apiFetch("/api/container", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+
+  if (actionFeedback) {
+    actionFeedback.textContent = ok ? "Accion completada" : (data && data.error) || "Error al ejecutar la accion";
+    actionFeedback.classList.toggle("ok", ok);
+    actionFeedback.classList.toggle("error", !ok);
+  }
+  await fetchStatus();
+  await loadOverview();
+}
+
+for (const button of document.querySelectorAll("[data-action]")) {
+  button.addEventListener("click", () => performAction(button.dataset.action));
+}
+
+/* ---------------------------------------------------------------------- */
+/* Console                                                                 */
+/* ---------------------------------------------------------------------- */
+
+async function sendCommand(event) {
+  event.preventDefault();
+  const command = commandInput.value.trim();
+  if (!command) return;
+
+  appendLogLine(`[cmd] ${command}`);
+  const { ok, data } = await apiFetch("/api/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  if (data && data.submitted) {
+    appendLogLine("[control] comando enviado (sin respuesta directa para este juego)");
+  } else {
+    appendLogLine(`[control] ${(data && (data.output || data.error)) || "Sin salida"}`);
+  }
+  if (!ok) appendLogLine("[control] la respuesta anterior indica un error");
+  commandInput.value = "";
+  commandInput.focus();
+}
+
+function appendLogLine(line) {
+  const atBottom = logsBox.scrollHeight - logsBox.scrollTop - logsBox.clientHeight < 30;
+  const lineEl = document.createElement("div");
+  lineEl.textContent = line;
+  lineEl.dataset.logLine = "1";
+  logsBox.appendChild(lineEl);
+  applySearchFilter();
+  if (autoscrollToggle.checked && atBottom) {
+    logsBox.scrollTop = logsBox.scrollHeight;
+  }
+}
+
+function applySearchFilter() {
+  const term = logsSearch.value.trim().toLowerCase();
+  for (const lineEl of logsBox.querySelectorAll("[data-log-line]")) {
+    const text = lineEl.textContent;
+    const matches = !term || text.toLowerCase().includes(term);
+    lineEl.style.display = matches ? "" : "none";
+  }
+}
+
+logsSearch?.addEventListener("input", applySearchFilter);
+
+copyLogsBtn?.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(logsBox.textContent);
+    copyLogsBtn.textContent = "Copiado!";
+    setTimeout(() => (copyLogsBtn.textContent = "Copiar"), 1500);
+  } catch (err) {
+    copyLogsBtn.textContent = "No se pudo copiar";
+    setTimeout(() => (copyLogsBtn.textContent = "Copiar"), 1500);
+  }
+});
+
+function initLogsStream() {
+  const source = new EventSource("/api/logs/stream");
+  source.onmessage = (event) => appendLogLine(event.data);
+  source.onerror = () => {
+    appendLogLine("[stream] reconectando logs...");
+    source.close();
+    setTimeout(initLogsStream, 2500);
+  };
+}
+
+if (commandForm) commandForm.addEventListener("submit", sendCommand);
+if (clearLogs && logsBox) {
+  clearLogs.addEventListener("click", () => {
+    logsBox.textContent = "";
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Files                                                                    */
+/* ---------------------------------------------------------------------- */
+
+const fileCategory = document.getElementById("fileCategory");
+const filePathBreadcrumb = document.getElementById("filePathBreadcrumb");
+const fileQuota = document.getElementById("fileQuota");
+const fileTableBody = document.getElementById("fileTableBody");
+const filesEmptyState = document.getElementById("filesEmptyState");
+const dropZone = document.getElementById("dropZone");
+const fileInput = document.getElementById("fileInput");
+const uploadProgressWrap = document.getElementById("uploadProgressWrap");
+const uploadProgress = document.getElementById("uploadProgress");
+const uploadProgressLabel = document.getElementById("uploadProgressLabel");
+
+let currentFilePath = "";
+let fileCategoriesLoaded = false;
+
+async function ensureFileCategories() {
+  if (fileCategoriesLoaded) return;
+  const { ok, data } = await apiFetch("/api/files");
+  if (!ok || !data) return;
+  fileCategory.innerHTML = "";
+  for (const category of data.categories) {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    fileCategory.appendChild(option);
+  }
+  fileCategoriesLoaded = true;
+}
+
+async function loadFiles() {
+  await ensureFileCategories();
+  const category = fileCategory.value;
+  if (!category) return;
+  const params = new URLSearchParams({ path: currentFilePath });
+  const { ok, data } = await apiFetch(`/api/files/${category}?${params.toString()}`);
+  if (!ok || !data) return;
+
+  filePathBreadcrumb.textContent = `/${category}/${currentFilePath}`;
+  fileQuota.textContent =
+    data.quota_bytes != null ? `${formatBytes(data.usage_bytes)} / ${formatBytes(data.quota_bytes)}` : "";
+
+  fileTableBody.innerHTML = "";
+  filesEmptyState.classList.toggle("is-hidden", data.entries.length > 0);
+
+  if (currentFilePath) {
+    const upRow = document.createElement("tr");
+    const upCell = document.createElement("td");
+    upCell.colSpan = 4;
+    const upLink = document.createElement("button");
+    upLink.className = "link-like";
+    upLink.type = "button";
+    upLink.textContent = ".. (subir un nivel)";
+    upLink.addEventListener("click", () => {
+      const parts = currentFilePath.split("/").filter(Boolean);
+      parts.pop();
+      currentFilePath = parts.join("/");
+      loadFiles();
+    });
+    upCell.appendChild(upLink);
+    upRow.appendChild(upCell);
+    fileTableBody.appendChild(upRow);
+  }
+
+  for (const entry of data.entries) {
+    const row = document.createElement("tr");
+
+    const nameCell = document.createElement("td");
+    if (entry.is_dir) {
+      const link = document.createElement("button");
+      link.className = "link-like";
+      link.type = "button";
+      link.textContent = `${entry.name}/`;
+      link.addEventListener("click", () => {
+        currentFilePath = entry.path;
+        loadFiles();
+      });
+      nameCell.appendChild(link);
+    } else {
+      nameCell.textContent = entry.name;
+    }
+    row.appendChild(nameCell);
+
+    const sizeCell = document.createElement("td");
+    sizeCell.textContent = entry.is_dir ? "-" : formatBytes(entry.size);
+    row.appendChild(sizeCell);
+
+    const modifiedCell = document.createElement("td");
+    modifiedCell.textContent = new Date(entry.modified_at * 1000).toLocaleString();
+    row.appendChild(modifiedCell);
+
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "row-actions";
+    if (!entry.is_dir) {
+      const downloadLink = document.createElement("a");
+      downloadLink.className = "btn ghost";
+      downloadLink.href = `/api/files/${category}/download?${new URLSearchParams({ path: entry.path })}`;
+      downloadLink.textContent = "Descargar";
+      actionsCell.appendChild(downloadLink);
+    }
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btn ghost";
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Eliminar";
+    deleteBtn.addEventListener("click", () => deleteFile(category, entry.path, entry.name));
+    actionsCell.appendChild(deleteBtn);
+    row.appendChild(actionsCell);
+
+    fileTableBody.appendChild(row);
+  }
+}
+
+async function deleteFile(category, path, name) {
+  const confirmed = await askConfirm("Eliminar archivo", `Se eliminara "${name}" de forma permanente. ¿Continuar?`);
+  if (!confirmed) return;
+  const { ok, data } = await apiFetch(`/api/files/${category}/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!ok) {
+    window.alert((data && data.error) || "No se pudo eliminar el archivo");
+  }
+  loadFiles();
+}
+
+function uploadFile(file) {
+  const category = fileCategory.value;
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("path", currentFilePath);
+
+  const doUpload = (overwrite) => {
+    if (overwrite) formData.set("overwrite", "true");
+    uploadProgressWrap.classList.remove("is-hidden");
+    uploadProgress.value = 0;
+    uploadProgressLabel.textContent = `Subiendo ${file.name}...`;
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/files/${category}/upload`);
+    xhr.setRequestHeader("X-CSRFToken", csrfToken);
+    xhr.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        uploadProgress.value = Math.round((event.loaded / event.total) * 100);
+      }
+    });
+    xhr.onload = async () => {
+      uploadProgressWrap.classList.add("is-hidden");
+      let payload = {};
+      try {
+        payload = JSON.parse(xhr.responseText);
+      } catch (err) {
+        payload = {};
+      }
+      if (xhr.status === 400 && /ya existe/i.test(payload.error || "")) {
+        const confirmed = await askConfirm("Sobrescribir archivo", `"${file.name}" ya existe. ¿Sobrescribir?`);
+        if (confirmed) doUpload(true);
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        loadFiles();
+      } else {
+        window.alert(payload.error || "No se pudo subir el archivo");
+      }
+    };
+    xhr.onerror = () => {
+      uploadProgressWrap.classList.add("is-hidden");
+      window.alert("Error de red durante la subida");
+    };
+    xhr.send(formData);
+  };
+
+  doUpload(false);
+}
+
+fileCategory?.addEventListener("change", () => {
+  currentFilePath = "";
+  loadFiles();
+});
+
+fileInput?.addEventListener("change", () => {
+  if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
+  fileInput.value = "";
+});
+
+dropZone?.addEventListener("click", () => fileInput.click());
+dropZone?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    fileInput.click();
+  }
+});
+dropZone?.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  dropZone.classList.add("is-dragover");
+});
+dropZone?.addEventListener("dragleave", () => dropZone.classList.remove("is-dragover"));
+dropZone?.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropZone.classList.remove("is-dragover");
+  const file = event.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+/* ---------------------------------------------------------------------- */
+/* Software / catalog: Juego -> Edicion -> Software -> Version wizard       */
+/* ---------------------------------------------------------------------- */
+
+const catalogSearch = document.getElementById("catalogSearch");
+const catalogChannel = document.getElementById("catalogChannel");
+const installForm = document.getElementById("installForm");
+const catalogVersion = document.getElementById("catalogVersion");
+const catalogRestart = document.getElementById("catalogRestart");
+const catalogBackup = document.getElementById("catalogBackup");
+const installButton = document.getElementById("installButton");
+const rollbackButton = document.getElementById("rollbackButton");
+const installFeedback = document.getElementById("installFeedback");
+const gameCards = document.getElementById("gameCards");
+const editionWrap = document.getElementById("editionWrap");
+const editionCards = document.getElementById("editionCards");
+const softwareCards = document.getElementById("softwareCards");
+
+let catalogTree = [];
+let currentGameFamily = null;
+let currentGameEdition = null;
+let selectedGame = null;
+let selectedEdition = null;
+let selectedSoftware = null;
+
+function gameEntry(family) {
+  return catalogTree.find((g) => g.family === family) || null;
+}
+
+function editionEntry(family, edition) {
+  const game = gameEntry(family);
+  if (!game) return null;
+  return game.editions.find((e) => e.edition === (edition || "")) || null;
+}
+
+// Official icons for each selectable game/software, vendored locally under
+// static/icons/ (the dashboard's CSP is img-src 'self' only - no external
+// CDNs - so these are downloaded once and served like any other static
+// asset, never hotlinked). Keyed the same way as the backend's adapter_id
+// (plan.md section 4: "minecraft-java/vanilla", "terraria/vanilla", ...) so
+// "vanilla" the Minecraft distribution and "vanilla" the Terraria one never
+// collide. Bukkit has no actively maintained distinct site of its own
+// (dev.bukkit.org now just redirects into CurseForge) so it reuses
+// Spigot's icon - same project family, not a placeholder.
+// app.js is loaded from /static/app.js, but relative URLs inside it resolve
+// against the current PAGE's URL (/dashboard), not the script's own path -
+// so this needs to be an absolute /static/... prefix, matching Flask's
+// default static url path (same one url_for('static', ...) produces in the
+// templates).
+const STATIC_ICON_BASE = "/static/";
+const GAME_ICON_PATHS = {
+  minecraft: "icons/minecraft.png",
+  terraria: "icons/terraria.ico",
+};
+const SOFTWARE_ICON_PATHS = {
+  "minecraft-java/vanilla": "icons/minecraft.png",
+  "minecraft-java/paper": "icons/paper.ico",
+  "minecraft-java/purpur": "icons/purpur.ico",
+  "minecraft-java/spigot": "icons/spigot.ico",
+  "minecraft-java/bukkit": "icons/spigot.ico",
+  "minecraft-java/fabric": "icons/fabric.png",
+  "minecraft-java/forge": "icons/forge.ico",
+  "minecraft-java/neoforge": "icons/neoforge.ico",
+  "minecraft-bedrock/bedrock": "icons/minecraft.png",
+  "terraria/vanilla": "icons/terraria.ico",
+  "terraria/tmodloader": "icons/tmodloader.png",
+};
+
+function adapterKey(family, edition, software) {
+  const prefix = edition ? `${family}-${edition}` : family;
+  return `${prefix}/${software}`;
+}
+
+function renderCardGrid(container, items, selectedValue, valueKey, labelKey, onSelect, iconResolver) {
+  container.innerHTML = "";
+  for (const item of items) {
+    const card = document.createElement("button");
+    card.className = "software-card";
+    card.type = "button";
+    card.dataset.value = item[valueKey];
+    card.setAttribute("role", "option");
+    const selected = item[valueKey] === selectedValue;
+    card.setAttribute("aria-selected", String(selected));
+    card.classList.toggle("is-selected", selected);
+
+    const iconPath = iconResolver ? iconResolver(item) : null;
+    const iconHtml = iconPath
+      ? `<img class="software-card-icon" src="${STATIC_ICON_BASE}${iconPath}" alt="" width="32" height="32" loading="lazy">`
+      : `<i class="bi bi-box-fill"></i>`;
+    card.innerHTML = `${iconHtml}<strong>${item[labelKey]}</strong>`;
+    card.addEventListener("click", () => onSelect(item));
+    container.appendChild(card);
+  }
+}
+
+function resetInstallStep() {
+  installForm.classList.add("is-hidden");
+  installFeedback.textContent = "Elige juego, edicion y software, luego pulsa buscar.";
+  installFeedback.classList.remove("error", "ok");
+}
+
+function selectGame(family) {
+  selectedGame = family;
+  const game = gameEntry(family);
+  renderCardGrid(
+    gameCards, catalogTree, selectedGame, "family", "label",
+    (item) => selectGame(item.family),
+    (item) => GAME_ICON_PATHS[item.family] || null
+  );
+
+  const editions = game ? game.editions : [];
+  const skipEditionStep = editions.length === 1 && editions[0].edition === "";
+  editionWrap.classList.toggle("is-hidden", skipEditionStep);
+  selectEdition(skipEditionStep ? "" : editions[0]?.edition ?? "");
+}
+
+function selectEdition(edition) {
+  selectedEdition = edition;
+  const game = gameEntry(selectedGame);
+  const editions = game ? game.editions : [];
+  renderCardGrid(
+    editionCards, editions, selectedEdition, "edition", "label",
+    (item) => selectEdition(item.edition),
+    (item) => GAME_ICON_PATHS[selectedGame] || null
+  );
+
+  const entry = editionEntry(selectedGame, selectedEdition);
+  const options = entry ? entry.software.map((s) => ({ software: s, label: s })) : [];
+  selectSoftware(options[0]?.software ?? null, options);
+}
+
+function selectSoftware(software, options) {
+  selectedSoftware = software;
+  renderCardGrid(
+    softwareCards, options, selectedSoftware, "software", "label",
+    (item) => selectSoftware(item.software, options),
+    (item) => SOFTWARE_ICON_PATHS[adapterKey(selectedGame, selectedEdition, item.software)] || null
+  );
+  resetInstallStep();
+}
+
+async function loadCatalogTree() {
+  // /api/config is identity-only (no docker status, no storage usage scan)
+  // - /api/overview recomputes disk usage by walking every file under
+  // game/ on every call, which can take a long time for software that
+  // ships thousands of small files (Bedrock, tModLoader). The Software tab
+  // only ever needs to know which game/edition/software is current.
+  const [{ data: gamesData }, { data: configData }] = await Promise.all([apiFetch("/api/catalog/games"), apiFetch("/api/config")]);
+  catalogTree = (gamesData && gamesData.games) || [];
+  if (configData) {
+    currentGameFamily = configData.game_family;
+    currentGameEdition = configData.game_edition || "";
+    setText("swCurrent", `${configData.game_family}${configData.game_edition ? "/" + configData.game_edition : ""} - ${configData.game_software}`);
+  }
+  selectGame(currentGameFamily || (catalogTree[0] && catalogTree[0].family));
+}
+
+async function loadCatalogVersions() {
+  if (!catalogVersion || !selectedGame || !selectedSoftware) return;
+  const editionSegment = selectedEdition || "-";
+  const channel = catalogChannel.value;
+
+  catalogVersion.innerHTML = "";
+  installFeedback.textContent = "Buscando versiones disponibles...";
+  installFeedback.classList.remove("error", "ok");
+  catalogSearch.disabled = true;
+  const { ok, data } = await apiFetch(`/api/catalog/${selectedGame}/${editionSegment}/${selectedSoftware}/versions?channel=${channel}`);
+  catalogSearch.disabled = false;
+  if (!ok || !data) {
+    installFeedback.textContent = (data && data.error) || "No se pudieron cargar las versiones.";
+    installFeedback.classList.add("error");
+    return;
+  }
+  for (const version of data.versions) {
+    const option = document.createElement("option");
+    option.value = version;
+    option.textContent = version;
+    catalogVersion.appendChild(option);
+  }
+  installForm.classList.remove("is-hidden");
+  installFeedback.textContent = `${data.versions.length} version(es) disponibles para ${selectedSoftware} (${channel}).`;
+  installFeedback.classList.add("ok");
+}
+
+/* ---------------------------------------------------------------------- */
+/* Install progress modal                                                  */
+/* ---------------------------------------------------------------------- */
+
+const installProgressModal = document.getElementById("installProgressModal");
+const installProgressTitle = document.getElementById("installProgressTitle");
+const installProgressMessage = document.getElementById("installProgressMessage");
+const installProgressBar = document.getElementById("installProgressBar");
+const installProgressClose = document.getElementById("installProgressClose");
+
+const INSTALL_PHASE_LABELS = {
+  preparing: "Preparando instalacion...",
+  resolving: "Buscando la descarga...",
+  stopping: "Deteniendo el servidor actual...",
+  downloading: "Descargando...",
+  snapshotting: "Creando copia de seguridad...",
+  extracting: "Extrayendo archivos...",
+  merging: "Fusionando con la instalacion anterior...",
+  placing: "Colocando archivos...",
+  compiling: "Compilando con BuildTools...",
+  running_installer: "Ejecutando el instalador oficial...",
+  writing_config: "Guardando configuracion...",
+  restarting: "Reiniciando la instancia...",
+  rolling_back: "Restaurando la copia de seguridad...",
+};
+
+let installProgressTimer = null;
+
+function setInstallProgressBar(current, total) {
+  if (typeof current === "number" && typeof total === "number" && total > 0) {
+    installProgressBar.classList.remove("is-indeterminate");
+    installProgressBar.style.width = `${Math.min(100, Math.round((current / total) * 100))}%`;
+  } else {
+    installProgressBar.classList.add("is-indeterminate");
+    installProgressBar.style.width = "";
+  }
+}
+
+function showInstallProgressModal(title) {
+  installProgressTitle.textContent = title;
+  installProgressMessage.textContent = "Preparando instalacion...";
+  installProgressClose.classList.add("is-hidden");
+  setInstallProgressBar(null, null);
+  installProgressModal.classList.remove("is-hidden");
+
+  const poll = async () => {
+    const { ok, data } = await apiFetch("/api/catalog/install/status");
+    if (!ok || !data) return;
+    const label = INSTALL_PHASE_LABELS[data.phase] || data.message || "Procesando...";
+    installProgressMessage.textContent = data.message || label;
+    setInstallProgressBar(data.current, data.total);
+  };
+  poll();
+  installProgressTimer = window.setInterval(poll, 800);
+}
+
+function hideInstallProgressModal({ ok, message } = {}) {
+  if (installProgressTimer) {
+    window.clearInterval(installProgressTimer);
+    installProgressTimer = null;
+  }
+  if (message) {
+    installProgressTitle.textContent = ok ? "Instalacion completada" : "La instalacion fallo";
+    installProgressMessage.textContent = message;
+    setInstallProgressBar(ok ? 1 : null, ok ? 1 : null);
+    installProgressClose.classList.remove("is-hidden");
+  } else {
+    installProgressModal.classList.add("is-hidden");
+  }
+}
+
+installProgressClose?.addEventListener("click", () => installProgressModal.classList.add("is-hidden"));
+
+async function loadInstallationDetails() {
+  const { ok, data } = await apiFetch("/api/catalog/installation");
+  if (!ok || !data) return;
+  const installation = data.installation;
+  setText("instServerSoftware", installation ? installation.game_software : "sin instalar aun");
+  setText("instVersion", installation ? installation.game_version : "-");
+  setText("instChannel", installation ? installation.channel : "-");
+  setText("instChecksum", installation && installation.checksum ? installation.checksum.slice(0, 16) + "..." : "-");
+  setText("instDate", installation ? installation.installed_at : "-");
+}
+
+catalogSearch?.addEventListener("click", loadCatalogVersions);
+
+installButton?.addEventListener("click", async () => {
+  const version = catalogVersion.value;
+  if (!version || !selectedGame || !selectedSoftware) return;
+  const channel = catalogChannel.value;
+  const isReprovision = selectedGame !== currentGameFamily || (selectedEdition || "") !== (currentGameEdition || "");
+
+  const backupText = catalogBackup.checked
+    ? "Se creara una copia de seguridad previa (usa Revertir si algo falla). "
+    : "No se creara ninguna copia de seguridad: los datos actuales se borraran de forma permanente y no podras revertir esta instalacion. ";
+  const confirmed = await askConfirm(
+    isReprovision ? "Reconfigurar el servidor" : "Instalar servidor",
+    (isReprovision
+      ? `Esto DETENDRA el servidor actual (${currentGameFamily}) y reconfigurara la instancia para ejecutar ${selectedGame}${selectedEdition ? "/" + selectedEdition : ""} (${selectedSoftware} ${version}, ${channel}). `
+      : `Se descargara ${selectedSoftware} ${version} (${channel}) y reemplazara la instalacion activa con una instalacion limpia. `) +
+      backupText +
+      (catalogRestart.checked || isReprovision ? "El servidor se reiniciara automaticamente al terminar." : ""),
+    "Los datos existentes se perderán."
+  );
+  if (!confirmed) return;
+
+  installFeedback.textContent = "Instalando, esto puede tardar varios minutos...";
+  installFeedback.classList.remove("error", "ok");
+  installButton.disabled = true;
+  showInstallProgressModal(isReprovision ? "Reconfigurando el servidor" : "Instalando servidor");
+
+  const { ok, data } = await apiFetch("/api/catalog/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      game_family: selectedGame,
+      game_edition: selectedEdition,
+      software: selectedSoftware,
+      version,
+      channel,
+      restart: catalogRestart.checked,
+      backup: catalogBackup.checked,
+    }),
+  });
+
+  installButton.disabled = false;
+  const warnings = ok && data && data.warnings ? data.warnings : [];
+  const message = ok
+    ? warnings.length
+      ? `Instalado correctamente. Advertencia: ${warnings.join(" ")}`
+      : "Instalado correctamente."
+    : (data && data.error) || "No se pudo instalar";
+  installFeedback.textContent = message;
+  installFeedback.classList.toggle("ok", ok);
+  installFeedback.classList.toggle("error", !ok);
+  hideInstallProgressModal({ ok, message });
+  if (ok) {
+    currentGameFamily = selectedGame;
+    currentGameEdition = selectedEdition;
+  }
+  loadInstallationDetails();
+  loadOverview();
+});
+
+rollbackButton?.addEventListener("click", async () => {
+  const confirmed = await askConfirm("Revertir instalacion", "Se restaurara la copia previa a la ultima instalacion. Esta accion reemplazara el contenido actual de game/.");
+  if (!confirmed) return;
+  showInstallProgressModal("Revirtiendo instalacion");
+  const { ok, data } = await apiFetch("/api/catalog/install/rollback", { method: "POST" });
+  const message = ok ? "Instalacion revertida." : (data && data.error) || "No se pudo revertir";
+  installFeedback.textContent = message;
+  installFeedback.classList.toggle("ok", ok);
+  installFeedback.classList.toggle("error", !ok);
+  hideInstallProgressModal({ ok, message });
+  loadInstallationDetails();
+  loadOverview();
+});
+
+/* ---------------------------------------------------------------------- */
+/* Settings                                                                 */
+/* ---------------------------------------------------------------------- */
+
+const SETTINGS_LABELS = {
+  instance_id: "ID de instancia",
+  game_family: "Juego",
+  game_edition: "Edicion",
+  game_software: "Software",
+  game_version: "Version",
+  channel: "Canal",
+  game_port: "Puerto del juego",
+  dashboard_port: "Puerto del panel",
+  world_name: "Nombre del mundo",
+  max_players: "Jugadores maximos",
+  motd: "MOTD",
+  app_user: "Usuario del panel",
+  max_upload_mb: "Subida maxima (MB)",
+  session_cookie_secure: "Cookie de sesion segura",
+  debug: "Modo debug",
+};
+
+async function loadSettings() {
+  const { ok, data } = await apiFetch("/api/config");
+  if (!ok || !data) return;
+  const container = document.getElementById("settingsDetails");
+  container.innerHTML = "";
+  for (const [key, label] of Object.entries(SETTINGS_LABELS)) {
+    const wrap = document.createElement("div");
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = String(data[key]);
+    wrap.appendChild(dt);
+    wrap.appendChild(dd);
+    container.appendChild(wrap);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Backups                                                                  */
+/* ---------------------------------------------------------------------- */
+
+const createBackupButton = document.getElementById("createBackupButton");
+const backupFeedback = document.getElementById("backupFeedback");
+const backupsTableBody = document.getElementById("backupsTableBody");
+const backupsEmptyState = document.getElementById("backupsEmptyState");
+
+async function loadBackups() {
+  const { ok, data } = await apiFetch("/api/backups");
+  if (!ok || !data) return;
+  backupsTableBody.innerHTML = "";
+  backupsEmptyState.classList.toggle("is-hidden", data.backups.length > 0);
+
+  for (const backup of data.backups) {
+    const row = document.createElement("tr");
+
+    const dateCell = document.createElement("td");
+    dateCell.textContent = backup.created_at;
+    row.appendChild(dateCell);
+
+    const sizeCell = document.createElement("td");
+    sizeCell.textContent = formatBytes(backup.size);
+    row.appendChild(sizeCell);
+
+    const actorCell = document.createElement("td");
+    actorCell.textContent = backup.actor;
+    row.appendChild(actorCell);
+
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "row-actions";
+    const downloadLink = document.createElement("a");
+    downloadLink.className = "btn ghost";
+    downloadLink.href = `/api/backups/${backup.id}/download`;
+    downloadLink.textContent = "Descargar";
+    actionsCell.appendChild(downloadLink);
+
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "btn ghost";
+    restoreBtn.type = "button";
+    restoreBtn.textContent = "Restaurar";
+    restoreBtn.addEventListener("click", () => restoreBackup(backup.id));
+    actionsCell.appendChild(restoreBtn);
+
+    row.appendChild(actionsCell);
+    backupsTableBody.appendChild(row);
+  }
+}
+
+async function restoreBackup(id) {
+  const confirmed = await askConfirm(
+    "Restaurar backup",
+    "El servidor debe estar detenido. Se reemplazara todo el contenido actual de game/ por el del backup. ¿Continuar?"
+  );
+  if (!confirmed) return;
+  const { ok, data } = await apiFetch(`/api/backups/${id}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  backupFeedback.textContent = ok ? "Backup restaurado correctamente." : (data && data.error) || "No se pudo restaurar";
+  backupFeedback.classList.toggle("ok", ok);
+  backupFeedback.classList.toggle("error", !ok);
+  loadOverview();
+}
+
+createBackupButton?.addEventListener("click", async () => {
+  backupFeedback.textContent = "Creando backup...";
+  backupFeedback.classList.remove("error", "ok");
+  const { ok, data } = await apiFetch("/api/backups/create", { method: "POST" });
+  backupFeedback.textContent = ok ? "Backup creado correctamente." : (data && data.error) || "No se pudo crear el backup";
+  backupFeedback.classList.toggle("ok", ok);
+  backupFeedback.classList.toggle("error", !ok);
+  loadBackups();
+});
+
+/* ---------------------------------------------------------------------- */
+/* Activity                                                                 */
+/* ---------------------------------------------------------------------- */
+
+async function loadActivity() {
+  const { ok, data } = await apiFetch("/api/activity");
+  if (!ok || !data) return;
+  const list = document.getElementById("activityList");
+  const emptyState = document.getElementById("activityEmptyState");
+  list.innerHTML = "";
+  emptyState.classList.toggle("is-hidden", data.entries.length > 0);
+
+  for (const entry of data.entries) {
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = entry.timestamp;
+    const text = document.createElement("span");
+    const detailText = entry.detail && Object.keys(entry.detail).length ? ` - ${JSON.stringify(entry.detail)}` : "";
+    text.textContent = `${entry.action}${detailText}`;
+    item.appendChild(time);
+    item.appendChild(text);
+    list.appendChild(item);
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Users                                                                    */
+/* ---------------------------------------------------------------------- */
+
+const userForm = document.getElementById("userForm");
+const usersList = document.getElementById("usersList");
+const userFeedback = document.getElementById("userFeedback");
+
+async function loadUsers() {
+  if (!usersList) return;
+  const { ok, data } = await apiFetch("/api/users");
+  if (!ok || !data) return;
+  usersList.innerHTML = "";
+  for (const user of data.users) {
+    const row = document.createElement("div");
+    row.className = "user-row";
+    const avatar = document.createElement("span");
+    avatar.className = "user-avatar";
+    avatar.textContent = user.username.slice(0, 1).toUpperCase();
+    const info = document.createElement("div");
+    info.className = "user-row-info";
+    const name = document.createElement("strong");
+    name.textContent = user.username;
+    const meta = document.createElement("small");
+    meta.textContent = user.active ? "Acceso activo" : "Acceso desactivado";
+    info.append(name, meta);
+    const role = document.createElement("span");
+    role.className = "role-pill";
+    role.textContent = user.role === "admin" ? "Administrador" : "Operador";
+    const active = document.createElement("button");
+    active.className = "btn ghost";
+    active.type = "button";
+    active.textContent = user.active ? "Desactivar" : "Activar";
+    active.addEventListener("click", async () => {
+      const confirmed = await askConfirm(user.active ? "Desactivar usuario" : "Activar usuario", `${user.active ? "Desactivaras" : "Activaras"} el acceso de ${user.username}.`);
+      if (!confirmed) return;
+      const response = await apiFetch(`/api/users/${encodeURIComponent(user.username)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: !user.active }) });
+      if (!response.ok) window.alert(response.data?.error || "No se pudo actualizar el usuario");
+      loadUsers();
+    });
+    row.append(avatar, info, role, active);
+    usersList.appendChild(row);
+  }
+}
+
+userForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const username = document.getElementById("newUsername").value.trim();
+  const password = document.getElementById("newPassword").value;
+  const role = document.getElementById("newUserRole").value;
+  const { ok, data } = await apiFetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password, role }) });
+  userFeedback.textContent = ok ? "Usuario creado correctamente." : (data?.error || "No se pudo crear el usuario.");
+  userFeedback.className = `feedback ${ok ? "ok" : "error"}`;
+  if (ok) { userForm.reset(); loadUsers(); }
+});
+
+/* ---------------------------------------------------------------------- */
+/* Wiring                                                                   */
+/* ---------------------------------------------------------------------- */
+
+tabLoaders.overview = () => {
+  loadOverview();
+  loadResources();
+};
+tabLoaders.files = loadFiles;
+tabLoaders.software = () => {
+  loadCatalogTree();
+  loadInstallationDetails();
+};
+tabLoaders.settings = loadSettings;
+tabLoaders.backups = loadBackups;
+tabLoaders.activity = loadActivity;
+tabLoaders.users = loadUsers;
+
+fetchStatus();
+loadOverview();
+loadResources();
+setInterval(fetchStatus, 10000);
+setInterval(() => {
+  if (document.getElementById("tab-overview") && !document.getElementById("tab-overview").hidden) {
+    loadOverview();
+  }
+}, 30000);
+// Faster, separate interval: CPU/RAM are live metrics (docker stats), not
+// config the admin just changed - a 30s wait to notice a spike defeats the
+// point of a "real-time" meter. Only ticks while the tab is actually
+// visible, same guard as the loadOverview interval above.
+setInterval(() => {
+  if (document.getElementById("tab-overview") && !document.getElementById("tab-overview").hidden) {
+    loadResources();
+  }
+}, 4000);
+initLogsStream();

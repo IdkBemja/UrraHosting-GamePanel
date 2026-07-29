@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block title %}Login | UrraHosting GamePanel{% endblock %}
+{% block body %}
+<div class="auth-shell">
+  <div class="auth-card">
+    <img class="brand-logo" src="{{ url_for('static', filename='imgs/logo.webp') }}" alt="UrraHosting">
+    <h1>UrraHosting - GamePanel</h1>
+    <p class="auth-subtitle">Acceso al panel de control de tu servidor de juego</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="post" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="username">Usuario</label>
+      <input id="username" name="username" type="text" autocomplete="username" required>
+
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+      <button type="submit" class="btn btn-primary login-btn">Entrar al panel</button>
+    </form>
+  </div>
+</div>
+<footer>
+  <div class="footer-content">
+    <p>&copy; {{ current_year }} UrraHosting. Todos los derechos reservados.</p>
+  </div>
+</footer>
+{% endblock %}

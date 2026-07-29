@@ -1,0 +1,20 @@
+# Uso: docker compose -f compose.yml -f compose.dev.yml --env-file .env.dev up --build
+#
+# Overlay SOLO para desarrollo local, sin Traefik. No modifica compose.yml
+# ni compose.traefik.yml - son overlays alternativos (nunca se usan juntos).
+#
+# Mantiene todo el hardening y las redes internas: no publica el agente de
+# control, RCON ni docker-proxy. Solo:
+#   1. Publica el dashboard en 127.0.0.1 para entrar desde el navegador sin
+#      Traefik.
+#   2. El puerto del juego puede publicarse para pruebas LAN/locales (ya lo
+#      hace compose.yml); aqui solo se limita el dashboard a localhost.
+#
+# En .env.dev, para poder iniciar sesion por HTTP plano sin TLS delante, usa
+# SESSION_COOKIE_SECURE=false y TRUSTED_PROXY_COUNT=0 (no hay proxy
+# delante). El .env.example productivo deja SESSION_COOKIE_SECURE=true.
+
+services:
+  dashboard:
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT}:${DASHBOARD_PORT}"
