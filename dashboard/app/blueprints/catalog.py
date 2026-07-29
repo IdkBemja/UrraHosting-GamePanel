@@ -113,7 +113,13 @@ def install():
                 category_warnings.extend(g.storage.clear_category(category))
 
         result = installer.install(
-            game_family, game_edition, software, version, channel, current_app.config.get("CURRENT_USER", "admin"), create_backup=create_backup
+            game_family,
+            game_edition,
+            software,
+            version,
+            channel,
+            current_app.config.get("CURRENT_USER", "admin"),
+            create_backup=create_backup,
         )
     except (CatalogError, InstallError, OSError) as exc:
         current_app.config["ACTIVITY"].record(

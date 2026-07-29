@@ -226,7 +226,10 @@ class Installer:
 
         def _on_clean_progress(current: int, total: int) -> None:
             self.progress.update(
-                "cleaning", f"Borrando los datos existentes para una instalacion limpia ({current}/{total})...", current=current, total=total
+                "cleaning",
+                f"Borrando los datos existentes para una instalacion limpia ({current}/{total})...",
+                current=current,
+                total=total,
             )
 
         self.progress.update("cleaning", "Borrando los datos existentes para una instalacion limpia...")
