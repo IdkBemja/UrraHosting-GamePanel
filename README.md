@@ -91,6 +91,10 @@ Browser -- HTTPS --> Traefik (optional) --> dashboard (Flask)
   volumes. The dashboard talks to Docker exclusively through this proxy.
 - **`dashboard`**: Flask app (`dashboard/app`), non-root, single gunicorn
   worker (the install lock and rate limiter are process-local by design).
+  Exposes its own unauthenticated `/health` (`dashboard/app/blueprints/
+  health.py`), used by `compose.yml`'s `healthcheck:` for this service —
+  same idea as `game_control_agent.py`'s `/health`, but confirming
+  Flask/gunicorn is up, not that the game process is running.
 
 ## Persistence layout (`DATA_DIR`)
 

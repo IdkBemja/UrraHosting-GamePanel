@@ -219,6 +219,21 @@ services:
     networks:
       - internal
       - public
+    # dashboard is the container docker-host's DockerBackend picks as
+    # "primary" for its post-deploy health wait (alphabetically first
+    # service name) - without this, Docker never populates Health.Status
+    # and that wait times out without ever detecting a dashboard that
+    # started but never bound its port. /health (dashboard/app/blueprints/
+    # health.py) is unauthenticated and never touches Docker/game-control,
+    # same scope as game-runtime's own healthcheck above. No curl/wget in
+    # this image (see dashboard/Dockerfile), hence python3 -c urllib, same
+    # trick as the game-runtime healthcheck.
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u,sys; sys.exit(0 if u.urlopen('http://127.0.0.1:${DASHBOARD_PORT}/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     <<: *container-hardening
     deploy:
       resources:

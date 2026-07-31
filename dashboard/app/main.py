@@ -17,6 +17,7 @@ from .blueprints.catalog import bp as catalog_bp
 from .blueprints.console import bp as console_bp
 from .blueprints.dashboard import bp as dashboard_bp
 from .blueprints.files import bp as files_bp
+from .blueprints.health import bp as health_bp
 from .blueprints.overview import bp as overview_bp
 from .blueprints.users import bp as users_bp
 from .extensions import csrf, limiter
@@ -169,6 +170,7 @@ def create_app() -> Flask:
     app.register_blueprint(backups_bp)
     app.register_blueprint(overview_bp)
     app.register_blueprint(users_bp)
+    app.register_blueprint(health_bp)
 
     _install_security_headers(app, config)
 

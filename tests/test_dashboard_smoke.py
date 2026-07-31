@@ -44,6 +44,14 @@ def test_unauthenticated_api_returns_401(client):
     assert response.status_code == 401
 
 
+def test_health_endpoint_is_public(client):
+    # No login, no CSRF token: this is what compose.yml's dashboard
+    # healthcheck calls from inside the container.
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "ok"}
+
+
 def test_login_without_csrf_token_rejected(client):
     response = client.post("/login", data={"username": "admin", "password": "a-strong-password"})
     assert response.status_code in (400, 403)
