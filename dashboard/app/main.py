@@ -206,7 +206,15 @@ def _install_security_headers(app: Flask, config) -> None:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), interest-cohort=()"
         if config.session_cookie_secure:
-            response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+            # No includeSubDomains: this dashboard is reachable under the
+            # shared platform base domain (one of many tenant instances)
+            # AND under whichever custom domain/subdomain a customer points
+            # at it later. Pinning HSTS for every subdomain of either would
+            # poison unrelated tenants/subdomains for up to 2 years in any
+            # browser that ever loaded this instance once, and would hard
+            # -lock out a freshly assigned custom subdomain in any browser
+            # if its certificate isn't issued yet when first visited.
+            response.headers["Strict-Transport-Security"] = "max-age=63072000"
         return response
 
 

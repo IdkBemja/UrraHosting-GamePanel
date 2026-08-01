@@ -69,6 +69,12 @@ services:
       - "traefik.http.routers.panel-${INSTANCE_ID}.rule=Host(`${INSTANCE_ID}.${PUBLIC_BASE_DOMAIN}`)"
       - "traefik.http.routers.panel-${INSTANCE_ID}.entrypoints=${TRAEFIK_WEB_ENTRYPOINT}"
       - "traefik.http.routers.panel-${INSTANCE_ID}.tls=true"
+      # Without an explicit certresolver, tls=true only makes Traefik
+      # terminate TLS with its own default (self-signed) certificate - it
+      # does NOT request one from Let's Encrypt on its own. Must match the
+      # resolver name declared under `certificatesResolvers` in the Traefik
+      # host's static config (see UrraHosting-Dashboard/traefik/traefik.yml).
+      - "traefik.http.routers.panel-${INSTANCE_ID}.tls.certresolver=${TRAEFIK_CERT_RESOLVER:-letsencrypt}"
       - "traefik.http.routers.panel-${INSTANCE_ID}.service=panel-${INSTANCE_ID}"
       - "traefik.http.services.panel-${INSTANCE_ID}.loadbalancer.server.port=${DASHBOARD_PORT}"
 
