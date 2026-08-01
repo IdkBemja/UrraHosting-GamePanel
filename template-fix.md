@@ -67,6 +67,16 @@ labels:
   - "traefik.http.services.panel-${INSTANCE_ID}.loadbalancer.server.port=${DASHBOARD_PORT}"
 ```
 
+**Nota de auto-corrección:** el comentario explicativo agregado junto al
+nuevo bloque `labels:` originalmente incluía un placeholder genérico
+`${VAR}` como ejemplo — como `docker-host` valida el `.env` escaneando el
+texto crudo de `compose.yml`/`compose.traefik.yml` en busca de cualquier
+`${...}` (comentarios incluidos, no solo lo que Compose realmente
+interpola), ese placeholder se colaba como si fuera una variable real
+requerida y rompía el deploy con `PLATFORM_STACK_ENV_INCOMPLETE:1
+variables faltantes ... missing ... VAR`. Se corrigió reformulando el
+comentario sin usar la sintaxis `${...}` para el ejemplo genérico.
+
 Verificado con una simulación de la interpolación de Compose (sustitución
 de `${VAR}` en cada string) contra el archivo ya corregido: con
 `INSTANCE_ID=a5f9af60-341e-4119-aa37-f756a0ad927b`, tanto el router
