@@ -20,35 +20,57 @@ services:
   game-runtime:
     networks:
       - traefik-public
+    # Labels are a LIST of "key=value" strings on purpose, not a YAML map -
+    # Docker Compose only interpolates ${VAR} inside string *values*, never
+    # inside map *keys*. With `traefik.tcp.routers.game-${INSTANCE_ID}.rule:
+    # ...` as a map key, Compose left "game-${INSTANCE_ID}" completely
+    # unexpanded on every real deploy (confirmed against a live Traefik log:
+    # `routerName=game-${INSTANCE_ID}@docker`, literal, not the real
+    # instance id) - harmless with a single instance since the label
+    # *values* still interpolate correctly, but any second concurrent
+    # instance would present the exact same literal label key and collide
+    # with/overwrite the first one's router in Traefik. Writing the whole
+    # "key=value" pair as one list-item string makes the entire line -
+    # including what looks like the key - interpolate correctly.
     labels:
-      traefik.enable: "true"
-      traefik.docker.network: ${TRAEFIK_PUBLIC_NETWORK:-traefik-public}
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK:-traefik-public}"
       # TCP (Minecraft Java, Terraria, tModLoader). Bedrock is UDP-only and
       # uses the udp router below instead - both are declared here and
       # Traefik simply never receives traffic on the one that does not
       # match the adapter actually listening.
-      traefik.tcp.routers.game-${INSTANCE_ID}.rule: "HostSNI(`*`)"
-      traefik.tcp.routers.game-${INSTANCE_ID}.entrypoints: ${TRAEFIK_GAME_ENTRYPOINT}
-      traefik.tcp.routers.game-${INSTANCE_ID}.service: game-${INSTANCE_ID}
-      traefik.tcp.services.game-${INSTANCE_ID}.loadbalancer.server.port: "${GAME_PORT}"
+      - "traefik.tcp.routers.game-${INSTANCE_ID}.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.game-${INSTANCE_ID}.entrypoints=${TRAEFIK_GAME_ENTRYPOINT}"
+      - "traefik.tcp.routers.game-${INSTANCE_ID}.service=game-${INSTANCE_ID}"
+      - "traefik.tcp.services.game-${INSTANCE_ID}.loadbalancer.server.port=${GAME_PORT}"
       # UDP (Bedrock only). Requires a dedicated UDP entrypoint in Traefik's
       # static configuration; TRAEFIK_GAME_ENTRYPOINT must point at that
       # entrypoint when GAME_EDITION=bedrock.
-      traefik.udp.routers.game-${INSTANCE_ID}.entrypoints: ${TRAEFIK_GAME_ENTRYPOINT}
-      traefik.udp.routers.game-${INSTANCE_ID}.service: game-${INSTANCE_ID}
-      traefik.udp.services.game-${INSTANCE_ID}.loadbalancer.server.port: "${GAME_PORT}"
+      - "traefik.udp.routers.game-${INSTANCE_ID}.entrypoints=${TRAEFIK_GAME_ENTRYPOINT}"
+      - "traefik.udp.routers.game-${INSTANCE_ID}.service=game-${INSTANCE_ID}"
+      - "traefik.udp.services.game-${INSTANCE_ID}.loadbalancer.server.port=${GAME_PORT}"
 
   dashboard:
     networks:
       - traefik-public
+    # See the game-runtime labels comment above - same reason this is a
+    # list of "key=value" strings, not a YAML map. This one was confirmed
+    # to actually break routing (not just the router's own display name):
+    # the router's `.service` *value* interpolated fine to
+    # `panel-<real-instance-id>`, but `traefik.http.services.panel-
+    # ${INSTANCE_ID}...` as a map *key* registered the service under the
+    # literal, unexpanded name `panel-${INSTANCE_ID}` instead - so the
+    # router pointed at a service name that was never actually created,
+    # and Traefik logged `service "panel-<real-instance-id>@docker" does
+    # not exist` even though the dashboard container was healthy.
     labels:
-      traefik.enable: "true"
-      traefik.docker.network: ${TRAEFIK_PUBLIC_NETWORK:-traefik-public}
-      traefik.http.routers.panel-${INSTANCE_ID}.rule: "Host(`${INSTANCE_ID}.${PUBLIC_BASE_DOMAIN}`)"
-      traefik.http.routers.panel-${INSTANCE_ID}.entrypoints: ${TRAEFIK_WEB_ENTRYPOINT}
-      traefik.http.routers.panel-${INSTANCE_ID}.tls: "true"
-      traefik.http.routers.panel-${INSTANCE_ID}.service: panel-${INSTANCE_ID}
-      traefik.http.services.panel-${INSTANCE_ID}.loadbalancer.server.port: "${DASHBOARD_PORT}"
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK:-traefik-public}"
+      - "traefik.http.routers.panel-${INSTANCE_ID}.rule=Host(`${INSTANCE_ID}.${PUBLIC_BASE_DOMAIN}`)"
+      - "traefik.http.routers.panel-${INSTANCE_ID}.entrypoints=${TRAEFIK_WEB_ENTRYPOINT}"
+      - "traefik.http.routers.panel-${INSTANCE_ID}.tls=true"
+      - "traefik.http.routers.panel-${INSTANCE_ID}.service=panel-${INSTANCE_ID}"
+      - "traefik.http.services.panel-${INSTANCE_ID}.loadbalancer.server.port=${DASHBOARD_PORT}"
 
 networks:
   traefik-public:
