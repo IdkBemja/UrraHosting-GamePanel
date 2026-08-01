@@ -187,11 +187,9 @@ async function loadOverview() {
   setText("ovGameEdition", data.game_edition || "-");
   setText("ovServerSoftware", data.game_software);
   setText("ovGameVersion", data.game_version);
-  setText("ovProtocol", data.protocol ? data.protocol.toUpperCase() : "-");
   if (data.connection) {
-    const endpoint = data.connection.kind === "domain" ? data.connection.address : `${data.connection.address}:${data.connection.port}`;
+    const endpoint = data.connection.kind === "domain" ? `${data.connection.address}:${data.connection.port}` : data.connection.address;
     setText("ovConnectAddress", endpoint);
-    setText("ovConnectHint", data.connection.kind === "domain" ? `Dominio (puerto ${data.connection.port})` : "Direccion IP y puerto del juego");
   }
   setText("ovCpuLimit", data.resources ? `${data.resources.game_cpu_limit} vCPU` : "-");
   setText("ovMemLimit", data.resources ? data.resources.game_memory_limit : "-");
@@ -928,45 +926,6 @@ rollbackButton?.addEventListener("click", async () => {
 });
 
 /* ---------------------------------------------------------------------- */
-/* Settings                                                                 */
-/* ---------------------------------------------------------------------- */
-
-const SETTINGS_LABELS = {
-  instance_id: "ID de instancia",
-  game_family: "Juego",
-  game_edition: "Edicion",
-  game_software: "Software",
-  game_version: "Version",
-  channel: "Canal",
-  game_port: "Puerto del juego",
-  dashboard_port: "Puerto del panel",
-  world_name: "Nombre del mundo",
-  max_players: "Jugadores maximos",
-  motd: "MOTD",
-  app_user: "Usuario del panel",
-  max_upload_mb: "Subida maxima (MB)",
-  session_cookie_secure: "Cookie de sesion segura",
-  debug: "Modo debug",
-};
-
-async function loadSettings() {
-  const { ok, data } = await apiFetch("/api/config");
-  if (!ok || !data) return;
-  const container = document.getElementById("settingsDetails");
-  container.innerHTML = "";
-  for (const [key, label] of Object.entries(SETTINGS_LABELS)) {
-    const wrap = document.createElement("div");
-    const dt = document.createElement("dt");
-    dt.textContent = label;
-    const dd = document.createElement("dd");
-    dd.textContent = String(data[key]);
-    wrap.appendChild(dt);
-    wrap.appendChild(dd);
-    container.appendChild(wrap);
-  }
-}
-
-/* ---------------------------------------------------------------------- */
 /* Backups                                                                  */
 /* ---------------------------------------------------------------------- */
 
@@ -1069,6 +1028,19 @@ async function loadActivity() {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Version check                                                          */
+/* ---------------------------------------------------------------------- */
+
+async function loadVersion() {
+  const { ok, data } = await apiFetch("/api/version");
+  if (!ok || !data) return;
+  const versionElement = document.getElementById("version");
+  if (versionElement) {
+    versionElement.textContent = data.version;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
 /* Users                                                                    */
 /* ---------------------------------------------------------------------- */
 
@@ -1137,7 +1109,6 @@ tabLoaders.software = () => {
   loadCatalogTree();
   loadInstallationDetails();
 };
-tabLoaders.settings = loadSettings;
 tabLoaders.backups = loadBackups;
 tabLoaders.activity = loadActivity;
 tabLoaders.users = loadUsers;
@@ -1145,6 +1116,7 @@ tabLoaders.users = loadUsers;
 fetchStatus();
 loadOverview();
 loadResources();
+loadVersion();
 setInterval(fetchStatus, 10000);
 setInterval(() => {
   if (document.getElementById("tab-overview") && !document.getElementById("tab-overview").hidden) {

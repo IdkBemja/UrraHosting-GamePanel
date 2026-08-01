@@ -64,34 +64,13 @@ def overview():
         }
     )
 
-
-@bp.route("/config")
-@login_required
-def config_view():
-    config = g.config
-    return jsonify(
-        {
-            "instance_id": config.instance_id,
-            "game_family": config.game_family,
-            "game_edition": config.game_edition,
-            "game_software": config.game_software,
-            "game_version": config.game_version,
-            "channel": config.channel,
-            "game_port": config.game_port,
-            "dashboard_port": config.dashboard_port,
-            "world_name": config.world_name,
-            "max_players": config.max_players,
-            "motd": config.motd,
-            "app_user": config.app_user,
-            "max_upload_mb": config.max_upload_mb,
-            "session_cookie_secure": config.session_cookie_secure,
-            "debug": config.debug,
-        }
-    )
-
-
 @bp.route("/activity")
 @login_required
 def activity():
     activity_log = current_app.config["ACTIVITY"]
     return jsonify({"entries": activity_log.recent(limit=200)})
+
+@bp.route("/version")
+@login_required
+def version():
+    return jsonify({"version": "v1.0.0-Beta"})
