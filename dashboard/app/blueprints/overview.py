@@ -73,4 +73,4 @@ def activity():
 @bp.route("/version")
 @login_required
 def version():
-    return jsonify({"version": "v1.0.0-Beta"})
+    return jsonify({"version": "v1.0.0-Stable"})
