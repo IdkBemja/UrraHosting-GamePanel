@@ -58,6 +58,26 @@ def test_rcon_dispatch_calls_rcon_execute(monkeypatch):
     assert result == {"ok": True, "output": "pong"}
 
 
+def test_rcon_connection_refused_returns_controlled_error(monkeypatch):
+    """Regression test: while the child process is alive but its RCON
+    listener isn't accepting connections yet (e.g. mid mod-loading on a
+    modded server), socket.create_connection raises a plain OSError
+    (ConnectionRefusedError). Before this fix, send_command() only caught
+    rcon.RconError, so this OSError escaped uncaught up through the HTTP
+    handler and got dumped as a full traceback to stderr on every poll -
+    flooding the Console tab's log stream."""
+    supervisor = _make_supervisor(monkeypatch)
+    supervisor.process = _FakeProcess()
+
+    def _raise(host, port, password, command, timeout):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(gca.rcon, "execute", _raise)
+    result = supervisor.send_command("list")
+    assert result["ok"] is False
+    assert "error" in result
+
+
 def test_fifo_dispatch_writes_to_stdin(monkeypatch):
     supervisor = _make_supervisor(
         monkeypatch,

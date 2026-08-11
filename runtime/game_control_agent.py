@@ -139,6 +139,18 @@ class Supervisor:
                 output = rcon.execute("127.0.0.1", port, self.config.rcon_password, command, timeout=10.0)
             except rcon.RconError as exc:
                 return {"ok": False, "error": str(exc)}
+            except OSError as exc:
+                # The child process can be alive (is_running() True) well
+                # before its RCON listener is actually accepting
+                # connections - e.g. mid mod-loading on a modded server, or
+                # right after a crash-restart loop. socket.create_connection
+                # raises a plain OSError (ConnectionRefusedError, timeout,
+                # etc.) here, which BaseHTTPRequestHandler would otherwise
+                # let escape uncaught and dump a full traceback to stderr
+                # for every single poll - flooding the Console tab's log
+                # stream with noise unrelated to anything the admin can act
+                # on. Report it the same controlled way as a real RconError.
+                return {"ok": False, "error": f"No se pudo conectar a RCON: {exc}"}
             return {"ok": True, "output": output}
 
         # fifo: write straight to the child's stdin pipe; there is no

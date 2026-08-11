@@ -129,6 +129,19 @@ services:
         max-size: "10m"
         max-file: "3"
     <<: *container-hardening
+    # Overrides container-hardening's default tmpfs (which Docker mounts
+    # noexec unless told otherwise): modded Minecraft servers routinely
+    # extract native .so libraries to java.io.tmpdir (JNA/OSHI for hardware
+    # info, SQLite JDBC for mods like EasyAuth, LWJGL, Netty's native
+    # transport) and then dlopen/mmap them - under noexec that mmap fails
+    # with "failed to map segment from shared object", which is silently
+    # non-fatal for OSHI (caught, hardware info just goes blank) but fatal
+    # for any mod whose own logic isn't as defensive (EasyAuth's SQLite
+    # setup throws mid-datapack-reload and takes the whole server down with
+    # it). The dashboard container never runs arbitrary JVMs, so its /tmp
+    # stays noexec via the shared anchor untouched.
+    tmpfs:
+      - /tmp:size=128m,mode=1777,exec
     deploy:
       resources:
         limits:
