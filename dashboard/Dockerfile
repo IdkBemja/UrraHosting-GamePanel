@@ -6,20 +6,38 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# default-jre-headless runs BuildTools.jar (Spigot/CraftBukkit) and the
-# Forge/NeoForge installer jars - both invoked from the dashboard, not the
-# game-runtime container (plan.md section 4.4).
+# gosu only here; Java comes from the Temurin matrix below (BuildTools.jar
+# and the Forge/NeoForge installer jars run from the dashboard, not the
+# game-runtime container - plan.md section 4.4).
 # `gamedata` (fixed GID 10002, also created in the base Dockerfile for the
 # game-runtime image) is a supplementary group shared with the `game` user
 # over there - see the comment on that Dockerfile's groupadd for why. It
 # grants nothing beyond read/write on DATA_DIR/game: no shared uid, no
 # access to the game container's process or any other mount.
-RUN apt-get update && apt-get install -y --no-install-recommends default-jre-headless gosu \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gosu \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& groupadd -g 10001 dashboard \
 	&& useradd -u 10001 -g dashboard -m -d /home/dashboard -s /usr/sbin/nologin dashboard \
 	&& groupadd -g 10002 gamedata \
 	&& usermod -aG gamedata dashboard
+
+# Same Temurin major-version matrix as the game-runtime image (see that
+# Dockerfile's comment): BuildTools/Forge/NeoForge installers need to run
+# under a Java as new as the Minecraft version they target (e.g. NeoForge
+# 21.1.x/MC 1.21.1 needs Java 21) - a single fixed JRE (previously
+# default-jre-headless, Java 17 on this base image) made every installer run
+# for a version newer than that fail silently, surfacing as "El instalador
+# no genero run.sh correctamente" regardless of which NeoForge/Forge version
+# was actually selected. installer.py resolves the right one per-install via
+# config/runtime_matrix.py, same as the game-runtime launch path.
+RUN set -eux; \
+	for v in 8 16 17 21 25; do \
+		mkdir -p "/opt/java/${v}"; \
+		curl -fsSL "https://api.adoptium.net/v3/binary/latest/${v}/ga/linux/x64/jdk/hotspot/normal/eclipse?project=jdk" -o "/tmp/temurin-${v}.tar.gz"; \
+		tar -xzf "/tmp/temurin-${v}.tar.gz" -C "/opt/java/${v}" --strip-components=1; \
+		rm "/tmp/temurin-${v}.tar.gz"; \
+		"/opt/java/${v}/bin/java" -version; \
+	done
 
 COPY dashboard/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt

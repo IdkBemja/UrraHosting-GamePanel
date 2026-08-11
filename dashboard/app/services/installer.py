@@ -36,6 +36,8 @@ from pathlib import Path
 
 import requests
 
+from config import runtime_matrix
+
 from .archive_extract import ArchiveError, extract_archive
 from .catalog import ALL_ALLOWED_HOSTS, CatalogError, CatalogService, DownloadInfo
 from .catalog.base import request_allowlisted
@@ -43,7 +45,6 @@ from .catalog.base import request_allowlisted
 _USER_AGENT = "UrraHosting-GamePanel/1.0 (+self-hosted)"
 _DOWNLOAD_TIMEOUT = 30
 _CHUNK_SIZE = 1024 * 1024
-_BUILDTOOLS_JAVA = "/usr/bin/java"
 
 _install_lock = threading.Lock()
 
@@ -270,7 +271,7 @@ class Installer:
         try:
             self._download_and_hash(download, tmp_fd, tmp_path)
             command = [
-                _BUILDTOOLS_JAVA,
+                _java_bin_for(version),
                 "-jar",
                 str(tmp_path),
                 "--rev",
@@ -317,7 +318,7 @@ class Installer:
             self.progress.update("running_installer", "Ejecutando el instalador oficial...")
             try:
                 completed = subprocess.run(
-                    [_BUILDTOOLS_JAVA, "-jar", str(tmp_path), "--installServer"],
+                    [_java_bin_for(download.minecraft_version), "-jar", str(tmp_path), "--installServer"],
                     cwd=self._game_dir,
                     capture_output=True,
                     text=True,
@@ -327,7 +328,9 @@ class Installer:
             except (OSError, subprocess.TimeoutExpired) as exc:
                 raise InstallError(f"El instalador no pudo ejecutarse: {exc}") from exc
             if completed.returncode != 0 or not (self._game_dir / "run.sh").exists():
-                raise InstallError("El instalador no genero run.sh correctamente")
+                detail = (completed.stderr or completed.stdout or "").strip()
+                suffix = f": {detail[-2000:]}" if detail else ""
+                raise InstallError(f"El instalador no genero run.sh correctamente{suffix}")
             (self._game_dir / "run.sh").chmod(0o755)
         finally:
             tmp_path.unlink(missing_ok=True)
@@ -502,6 +505,17 @@ class Installer:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _java_bin_for(minecraft_version: str) -> str:
+    """Forge/NeoForge installers (and BuildTools) refuse to run - or silently
+    fail to produce their output - under a Java older than the target
+    Minecraft version needs (e.g. NeoForge 21.1.x/MC 1.21.1 needs Java 21).
+    Resolve the same runtime_matrix used to launch the server (config/
+    runtime_matrix.py) so the installer runs under a Java that's actually
+    compatible, instead of whatever single JRE happens to be on PATH."""
+    resolved, _warning = runtime_matrix.resolve(minecraft_version, "auto")
+    return f"/opt/java/{resolved}/bin/java"
 
 
 def _count_files(root: Path) -> int:
