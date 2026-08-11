@@ -17,6 +17,19 @@ from config.game_properties import upsert_properties
 
 from .base import AdapterConfigError, GameRuntimeAdapter, memory_to_mb
 
+# Written by dashboard/app/services/installer.py's _write_manifest() into
+# its OWN install_dir (/data/install, mounted read-only here - see
+# compose.yml), never into server_dir (/data/game) - launch_command() below
+# must read it from the same place it's actually written, or launch_mode
+# silently defaults to "jar" for every install, including Forge/NeoForge
+# ("script" mode): with no server.jar in server_dir (that install kind only
+# ever produces run.sh), that raises AdapterConfigError every single launch,
+# indistinguishable from "nothing installed" to an admin watching the
+# Console tab - the agent stays up with no child process, never crash-loops
+# (see game_control_agent.py's Supervisor.start()), so the container looks
+# perfectly healthy the whole time.
+_INSTALL_DIR = Path("/data/install")
+
 _DIFFICULTIES = {"peaceful", "easy", "normal", "hard"}
 _GAMEMODES = {"survival", "creative", "adventure", "spectator"}
 _JAVA_VERSIONS = {"auto", *runtime_matrix.SUPPORTED_JAVA_VERSIONS}
@@ -109,7 +122,7 @@ class MinecraftJavaAdapter(GameRuntimeAdapter):
         return f"/opt/java/{resolved}/bin/java"
 
     def launch_command(self, config, env: Mapping[str, str], server_dir: Path) -> list[str]:
-        manifest_path = server_dir / "installation.json"
+        manifest_path = _INSTALL_DIR / "installation.json"
         launch_mode = "jar"
         server_jar = "server.jar"
         if manifest_path.exists():

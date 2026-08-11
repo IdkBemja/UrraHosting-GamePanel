@@ -67,7 +67,18 @@ def status():
 
     players_online = players_max = None
     uptime_seconds = None
+    # Distinct from `running` above: the CONTAINER can be up/healthy (its
+    # control agent answering HTTP) while the actual game child process
+    # inside it isn't - e.g. nothing installed yet, or a crashed launch.
+    # The Console tab needs this specifically to explain an empty log
+    # stream and every command failing with 502, instead of leaving an
+    # admin to wonder whether either of those is a bug.
+    game_process_running = None
     if state["running"]:
+        try:
+            game_process_running = current_app.config["GAME_CONTROL"].health().get("running")
+        except GameControlError:
+            game_process_running = None
         players_online, players_max = _players_online()
         uptime_seconds = _uptime_seconds(state["started_at"])
 
@@ -75,6 +86,7 @@ def status():
         {
             "container": current_app.config["GAME_CONTAINER_NAME"],
             "running": state["running"],
+            "game_process_running": game_process_running,
             "container_status": state["status"],
             "uptime_seconds": uptime_seconds,
             "players_online": players_online,

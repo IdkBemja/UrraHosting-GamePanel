@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+import runtime.adapters.minecraft_java as minecraft_java_module
 from config.game_config import load_from_environ
 from runtime.adapters import UnknownAdapterError, get_adapter
 from runtime.adapters.base import AdapterConfigError
@@ -53,29 +54,70 @@ def test_minecraft_java_prepare_writes_eula_and_properties(tmp_path):
     assert "enable-rcon=true" in props
 
 
-def test_minecraft_java_launch_command_no_shell_and_requires_jar(tmp_path):
+def test_minecraft_java_launch_command_no_shell_and_requires_jar(tmp_path, monkeypatch):
+    # installation.json is written by dashboard/app/services/installer.py
+    # into ITS OWN install_dir (/data/install, a separate mount from
+    # server_dir=/data/game - see minecraft_java.py's _INSTALL_DIR
+    # docstring), never into server_dir itself - this must be patched
+    # separately from tmp_path (server_dir) or the test would pass for the
+    # wrong reason (matching the bug this used to have, not the real path).
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    monkeypatch.setattr(minecraft_java_module, "_INSTALL_DIR", install_dir)
+
     adapter = get_adapter("minecraft", "java", "paper")
     config = _config()
     with pytest.raises(AdapterConfigError):
         adapter.launch_command(config, base_env(), tmp_path)
 
     (tmp_path / "server.jar").write_bytes(b"fake jar")
-    (tmp_path / "installation.json").write_text(json.dumps({"launch_mode": "jar", "target_filename": "server.jar"}))
+    (install_dir / "installation.json").write_text(json.dumps({"launch_mode": "jar", "target_filename": "server.jar"}))
     argv = adapter.launch_command(config, base_env(), tmp_path)
     assert "-jar" in argv
     assert str(tmp_path / "server.jar") in argv
     assert " " not in argv[0]  # argv[0] is a bare path, never shell-interpolated
 
 
-def test_minecraft_java_launch_command_script_mode(tmp_path):
+def test_minecraft_java_launch_command_script_mode(tmp_path, monkeypatch):
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    monkeypatch.setattr(minecraft_java_module, "_INSTALL_DIR", install_dir)
+
     adapter = get_adapter("minecraft", "java", "forge")
     config = _config(GAME_SOFTWARE="forge")
     run_sh = tmp_path / "run.sh"
     run_sh.write_text("#!/bin/bash\necho hi\n")
-    (tmp_path / "installation.json").write_text(json.dumps({"launch_mode": "script"}))
+    (install_dir / "installation.json").write_text(json.dumps({"launch_mode": "script"}))
     argv = adapter.launch_command(config, base_env(), tmp_path)
     assert argv[0] == "bash"
     assert str(run_sh) in argv
+
+
+def test_minecraft_java_launch_command_ignores_manifest_in_server_dir(tmp_path, monkeypatch):
+    """Regression test for the actual bug: installation.json sitting in
+    server_dir (where it is NEVER written in production) must not be picked
+    up - only the one in the real install_dir counts. Before this fix,
+    launch_command() read server_dir/installation.json exclusively, so it
+    silently defaulted to launch_mode="jar" for every real install
+    (including every Forge/NeoForge one, which only ever produces run.sh,
+    never server.jar) - AdapterConfigError on every launch attempt, with the
+    agent staying up child-less (see game_control_agent.py's
+    Supervisor.start()) so the container looked perfectly healthy the whole
+    time with nothing obviously wrong from the Docker/Resumen tab's point of
+    view."""
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    monkeypatch.setattr(minecraft_java_module, "_INSTALL_DIR", install_dir)
+
+    adapter = get_adapter("minecraft", "java", "forge")
+    config = _config(GAME_SOFTWARE="forge")
+    (tmp_path / "run.sh").write_text("#!/bin/bash\necho hi\n")
+    # Wrong location - must be ignored, leaving launch_mode at its "jar"
+    # default (and thus raising, since there's no server.jar either).
+    (tmp_path / "installation.json").write_text(json.dumps({"launch_mode": "script"}))
+
+    with pytest.raises(AdapterConfigError):
+        adapter.launch_command(config, base_env(), tmp_path)
 
 
 def test_minecraft_java_validate_extra_rejects_bad_difficulty():

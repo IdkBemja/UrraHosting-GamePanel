@@ -124,6 +124,7 @@ const clearLogs = document.getElementById("clearLogs");
 const copyLogsBtn = document.getElementById("copyLogs");
 const logsSearch = document.getElementById("logsSearch");
 const autoscrollToggle = document.getElementById("autoscrollToggle");
+const consoleNotRunningHint = document.getElementById("consoleNotRunningHint");
 
 let uptimeSeconds = null;
 
@@ -177,6 +178,15 @@ async function fetchStatus() {
   }
   uptimeSeconds = data.running ? data.uptime_seconds : null;
   renderUptime();
+
+  // Distinct from `data.running` (the container): the container can be up
+  // while the actual game process inside it isn't (nothing installed yet,
+  // a crashed launch) - that's exactly when the Console tab would
+  // otherwise look silently broken (empty log stream, every command
+  // failing with 502) with no indication why.
+  if (consoleNotRunningHint) {
+    consoleNotRunningHint.classList.toggle("is-hidden", data.game_process_running !== false);
+  }
 }
 
 async function loadOverview() {

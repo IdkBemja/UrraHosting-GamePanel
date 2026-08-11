@@ -81,4 +81,14 @@ EXPOSE ${DASHBOARD_PORT}
 # are NOT chowned from here on purpose - game-runtime's entrypoint.sh (which
 # starts first, see compose.yml's depends_on) already does that, since those
 # also need to be writable by ITS uid, which this chown alone could not do.
-CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups /data/uploads && (chown -R dashboard:dashboard /data/panel /data/install /data/backups /data/uploads || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --threads 8 --timeout 1900 'app.main:create_app()'"]
+# --worker-class gthread made explicit rather than relied on implicitly:
+# gunicorn 23 auto-selects gthread whenever --threads > 1 is passed (verified
+# empirically against this exact gunicorn version - a plain sync worker,
+# forced explicitly, DOES starve every other request while /api/logs/stream
+# is open, confirming the concern is real in principle), so this line is
+# not a behavior change on this gunicorn version - just not leaving
+# something this codebase's concurrency assumptions depend on
+# (installer.py's InstallProgress polling while an install blocks;
+# overview.py's periodic polls; the Console tab's log stream) to an
+# undocumented default that could differ across gunicorn versions.
+CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups /data/uploads && (chown -R dashboard:dashboard /data/panel /data/install /data/backups /data/uploads || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --worker-class gthread --threads 8 --timeout 1900 'app.main:create_app()'"]
