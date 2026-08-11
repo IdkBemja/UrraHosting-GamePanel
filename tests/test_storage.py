@@ -55,6 +55,40 @@ def test_save_upload_enforces_max_upload_bytes(tmp_path):
         storage.save_upload("game", "", "big.txt", io.BytesIO(b"way too big"), content_length=11)
 
 
+def test_save_upload_wraps_mkdir_oserror_as_storage_error(tmp_path, monkeypatch):
+    """A permission/disk failure preparing the destination directory must
+    come back as a clean StorageError (files.py's existing `except
+    StorageError` returns clean JSON for it) rather than an unhandled
+    OSError - that used to fall through to Flask's default HTML error page,
+    which app.js can't parse and shows a useless generic "No se pudo subir
+    el archivo" with no real cause visible."""
+    storage = _storage(tmp_path)
+
+    def failing_mkdir(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", failing_mkdir)
+    with pytest.raises(StorageError, match="No se pudo preparar la carpeta de destino"):
+        storage.save_upload("game", "", "mod.jar", io.BytesIO(b"jar bytes"), content_length=9)
+
+
+def test_save_upload_wraps_write_oserror_as_storage_error(tmp_path, monkeypatch):
+    storage = _storage(tmp_path)
+
+    real_open = open
+
+    def failing_open(path, mode="r", *args, **kwargs):
+        if str(path).endswith(".part") and "w" in mode:
+            raise OSError(28, "No space left on device")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    with pytest.raises(StorageError, match="No se pudo guardar el archivo"):
+        storage.save_upload("game", "", "mod.jar", io.BytesIO(b"jar bytes"), content_length=9)
+    # The failed partial write must never linger as a stray ".part" file.
+    assert list((tmp_path / "game").iterdir()) == []
+
+
 def test_quota_enforced(tmp_path):
     storage = _storage(tmp_path, quota_bytes=5)
     with pytest.raises(StorageError):

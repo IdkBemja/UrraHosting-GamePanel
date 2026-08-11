@@ -237,7 +237,17 @@ class InstanceStorage:
 
         safe_name = sanitize_filename(filename)
         target_dir = self.resolve(category, relative_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # Most commonly a permission mismatch on the bind mount (see
+            # plan.md section 8: dashboard and game-runtime are different
+            # uids with no shared ownership guarantee on every backend) or a
+            # full disk - either way this must come back as a clean,
+            # specific StorageError, not an unhandled OSError that would
+            # otherwise 500 and show the frontend's generic upload-failed
+            # fallback with no real cause visible.
+            raise StorageError(f"No se pudo preparar la carpeta de destino: {exc}") from exc
         target = target_dir / safe_name
 
         if target.is_symlink():
@@ -263,6 +273,12 @@ class InstanceStorage:
             if content_length is None:
                 self.check_quota(written)
             os.replace(tmp_path, target)
+        except StorageError:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise StorageError(f"No se pudo guardar el archivo: {exc}") from exc
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise

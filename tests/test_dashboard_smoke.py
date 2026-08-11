@@ -83,6 +83,75 @@ def test_security_headers_present(client):
     assert "script-src 'self'" in response.headers["Content-Security-Policy"]
 
 
+def _login(client) -> str:
+    login_page = client.get("/login")
+    token = _csrf_token(login_page.get_data(as_text=True))
+    client.post("/login", data={"username": "admin", "password": "a-strong-password", "csrf_token": token})
+    dashboard_page = client.get("/dashboard")
+    match = re.search(r'name="csrf-token" content="([^"]+)"', dashboard_page.get_data(as_text=True))
+    assert match
+    return match.group(1)
+
+
+def test_csrf_failure_on_api_route_returns_json_not_html(client):
+    """Before main.py registered global error handlers, a CSRF failure
+    (flask_wtf's CSRFError, an HTTPException) on an /api/* route fell
+    through to Flask's default HTML error page - app.js's apiFetch() cannot
+    JSON.parse that, so it silently shows a useless generic error with no
+    real cause visible, no matter what actually went wrong."""
+    _login(client)
+    response = client.post("/api/files/game/delete", json={"path": "x"})  # no X-CSRFToken header
+    assert response.status_code == 400
+    assert response.content_type.startswith("application/json")
+    assert "error" in response.get_json()
+
+
+def test_unhandled_exception_on_api_route_returns_json_500(client, monkeypatch):
+    """Any bug/OS-level failure a route doesn't explicitly catch (the
+    reported symptom: uploading a .jar to mods failed with a generic
+    message and no visible cause) must still come back as clean JSON, never
+    Flask's default HTML error page."""
+    import flask
+
+    token = _login(client)
+
+    class _FailingDockerClient:
+        def status(self):
+            raise RuntimeError("boom: simulated unexpected failure")
+
+    with client.application.app_context():
+        flask.current_app.config["DOCKER_CLIENT"] = _FailingDockerClient()
+
+    response = client.get("/api/overview", headers={"X-CSRFToken": token})
+    assert response.status_code == 500
+    assert response.content_type.startswith("application/json")
+    assert response.get_json() == {"error": "Error interno del servidor"}
+
+
+def test_unhandled_exception_on_page_route_is_not_swallowed_as_json(client, monkeypatch):
+    """Only /api/* gets the JSON-error treatment - a real bug on a page
+    route must behave like normal Flask, never silently turn into a JSON
+    blob a browser would just download. Flask's test client re-raises
+    unhandled exceptions instead of turning them into an HTTP response
+    (TESTING=True's normal behavior, same with or without this app's own
+    handlers) - production (TESTING=False) renders Flask's default HTML 500
+    page instead, which is what actually matters here: the /api/ branch in
+    main.py's _handle_unexpected_exception is never reached for this path."""
+    import flask
+    import pytest as _pytest
+
+    _login(client)
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    with client.application.app_context():
+        flask.current_app.view_functions["dashboard.index"] = _boom
+
+    with _pytest.raises(RuntimeError, match="boom"):
+        client.get("/dashboard")
+
+
 def test_operator_cannot_manage_users(client, monkeypatch):
     login_page = client.get("/login")
     token = _csrf_token(login_page.get_data(as_text=True))

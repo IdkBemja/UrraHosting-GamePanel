@@ -391,6 +391,7 @@ const fileInput = document.getElementById("fileInput");
 const uploadProgressWrap = document.getElementById("uploadProgressWrap");
 const uploadProgress = document.getElementById("uploadProgress");
 const uploadProgressLabel = document.getElementById("uploadProgressLabel");
+const filesFeedback = document.getElementById("filesFeedback");
 
 let currentFilePath = "";
 let fileCategoriesLoaded = false;
@@ -505,53 +506,95 @@ async function deleteFile(category, path, name) {
   loadFiles();
 }
 
-function uploadFile(file) {
+// Resolves once this ONE file is done (uploaded, skipped by the user on an
+// overwrite prompt, or failed) - never rejects, so uploadFiles() below can
+// always finish a whole batch instead of aborting it on the first error.
+function uploadOneFile(category, file) {
+  return new Promise((resolve) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("path", currentFilePath);
+
+    const doUpload = (overwrite) => {
+      if (overwrite) formData.set("overwrite", "true");
+      uploadProgress.value = 0;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/files/${category}/upload`);
+      xhr.setRequestHeader("X-CSRFToken", csrfToken);
+      xhr.upload.addEventListener("progress", (event) => {
+        if (event.lengthComputable) uploadProgress.value = Math.round((event.loaded / event.total) * 100);
+      });
+      xhr.onload = async () => {
+        // The backend always returns JSON on /api/* now (see main.py's
+        // global error handlers) - a parse failure here means something
+        // outside Flask entirely (a proxy, a truncated response).
+        let payload = {};
+        try {
+          payload = JSON.parse(xhr.responseText);
+        } catch (err) {
+          payload = {};
+        }
+        if (xhr.status === 400 && /ya existe/i.test(payload.error || "")) {
+          const confirmed = await askConfirm("Sobrescribir archivo", `"${file.name}" ya existe. ¿Sobrescribir?`);
+          if (confirmed) {
+            doUpload(true);
+            return;
+          }
+          resolve({ name: file.name, ok: false, skipped: true });
+          return;
+        }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ name: file.name, ok: true });
+        } else {
+          resolve({ name: file.name, ok: false, error: payload.error || `El servidor respondio ${xhr.status}` });
+        }
+      };
+      xhr.onerror = () => resolve({ name: file.name, ok: false, error: "Error de red durante la subida" });
+      xhr.send(formData);
+    };
+
+    doUpload(false);
+  });
+}
+
+async function uploadFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || !fileCategory) return;
   const category = fileCategory.value;
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("path", currentFilePath);
 
-  const doUpload = (overwrite) => {
-    if (overwrite) formData.set("overwrite", "true");
-    uploadProgressWrap.classList.remove("is-hidden");
-    uploadProgress.value = 0;
-    uploadProgressLabel.textContent = `Subiendo ${file.name}...`;
+  uploadProgressWrap.classList.remove("is-hidden");
+  filesFeedback.textContent = "";
+  filesFeedback.classList.remove("error", "ok");
 
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/files/${category}/upload`);
-    xhr.setRequestHeader("X-CSRFToken", csrfToken);
-    xhr.upload.addEventListener("progress", (event) => {
-      if (event.lengthComputable) {
-        uploadProgress.value = Math.round((event.loaded / event.total) * 100);
-      }
-    });
-    xhr.onload = async () => {
-      uploadProgressWrap.classList.add("is-hidden");
-      let payload = {};
-      try {
-        payload = JSON.parse(xhr.responseText);
-      } catch (err) {
-        payload = {};
-      }
-      if (xhr.status === 400 && /ya existe/i.test(payload.error || "")) {
-        const confirmed = await askConfirm("Sobrescribir archivo", `"${file.name}" ya existe. ¿Sobrescribir?`);
-        if (confirmed) doUpload(true);
-        return;
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        loadFiles();
-      } else {
-        window.alert(payload.error || "No se pudo subir el archivo");
-      }
-    };
-    xhr.onerror = () => {
-      uploadProgressWrap.classList.add("is-hidden");
-      window.alert("Error de red durante la subida");
-    };
-    xhr.send(formData);
-  };
+  // Sequential, not parallel: keeps the single progress bar meaningful
+  // (one file's real upload progress at a time instead of N interleaved
+  // ones) and avoids hammering the server with a burst of large
+  // concurrent uploads for a big mod pack.
+  const results = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    uploadProgressLabel.textContent = files.length > 1 ? `Subiendo ${file.name} (${i + 1}/${files.length})...` : `Subiendo ${file.name}...`;
+    results.push(await uploadOneFile(category, file));
+  }
+  uploadProgressWrap.classList.add("is-hidden");
 
-  doUpload(false);
+  const succeeded = results.filter((r) => r.ok);
+  const failed = results.filter((r) => !r.ok && !r.skipped);
+
+  if (failed.length) {
+    const summary =
+      files.length === 1
+        ? failed[0].error
+        : `${succeeded.length} de ${files.length} archivo(s) subidos. Fallaron: ${failed.map((r) => `${r.name} (${r.error})`).join(", ")}`;
+    filesFeedback.textContent = summary;
+    filesFeedback.classList.add("error");
+  } else if (succeeded.length) {
+    filesFeedback.textContent = files.length > 1 ? `${succeeded.length} archivo(s) subidos correctamente.` : "Archivo subido correctamente.";
+    filesFeedback.classList.add("ok");
+  }
+
+  loadFiles();
 }
 
 fileCategory?.addEventListener("change", () => {
@@ -560,7 +603,7 @@ fileCategory?.addEventListener("change", () => {
 });
 
 fileInput?.addEventListener("change", () => {
-  if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
+  uploadFiles(fileInput.files);
   fileInput.value = "";
 });
 
@@ -579,8 +622,7 @@ dropZone?.addEventListener("dragleave", () => dropZone.classList.remove("is-drag
 dropZone?.addEventListener("drop", (event) => {
   event.preventDefault();
   dropZone.classList.remove("is-dragover");
-  const file = event.dataTransfer.files[0];
-  if (file) uploadFile(file);
+  uploadFiles(event.dataTransfer.files);
 });
 
 /* ---------------------------------------------------------------------- */

@@ -4,7 +4,8 @@ import os
 import time
 from pathlib import Path
 
-from flask import Flask, g
+from flask import Flask, g, jsonify, request
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config.game_config import load_from_environ
@@ -177,12 +178,42 @@ def create_app() -> Flask:
     app.register_blueprint(health_bp)
 
     _install_security_headers(app, config)
+    _install_error_handlers(app)
 
     @app.context_processor
     def inject_current_year():
         return {"current_year": time.strftime("%Y", time.gmtime())}
 
     return app
+
+
+def _install_error_handlers(app: Flask) -> None:
+    """Without these, ANY exception a route doesn't explicitly catch (an
+    OSError from a permission/disk issue, a CSRF failure, a 413 from
+    MAX_CONTENT_LENGTH, ...) falls through to Flask/Werkzeug's default HTML
+    error page. app.js's apiFetch()/uploadFile() both JSON.parse the
+    response body and fall back to a generic, useless message when that
+    fails - the exact "No se pudo subir el archivo" symptom with no real
+    cause visible, for what could be any failure at all. /api/* always gets
+    a real JSON {"error": ...} body instead; page routes (/dashboard,
+    /login) keep Flask's normal HTML handling."""
+
+    @app.errorhandler(HTTPException)
+    def _handle_http_exception(exc: HTTPException):
+        if not request.path.startswith("/api/"):
+            return exc
+        return jsonify({"error": exc.description or exc.name}), exc.code or 500
+
+    @app.errorhandler(Exception)
+    def _handle_unexpected_exception(exc: Exception):
+        # Logged so the real cause is still visible in `docker compose logs
+        # dashboard` - never shown to the client, which only gets a generic
+        # message (this is the catch-all for bugs/OS errors no route
+        # anticipated, not a place to leak internals).
+        app.logger.exception("Excepcion no manejada en %s", request.path)
+        if not request.path.startswith("/api/"):
+            raise exc
+        return jsonify({"error": "Error interno del servidor"}), 500
 
 
 def _install_security_headers(app: Flask, config) -> None:
