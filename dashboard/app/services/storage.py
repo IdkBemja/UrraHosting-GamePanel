@@ -180,8 +180,34 @@ class InstanceStorage:
         if not target.is_dir():
             raise StorageError(f"'{relative_path}' no es un directorio")
 
+        # mods/plugins/resourcepacks are separate bind mounts OVERLAID onto
+        # these exact subpaths of game/ for game-runtime (compose.yml:
+        # `${DATA_DIR}/mods:/data/game/mods`) - but the dashboard has no such
+        # overlay, only its own separate top-level mounts for those same
+        # categories. Browsing "game" at its root would otherwise show
+        # whatever plain, uncovered directory happens to physically exist on
+        # disk at e.g. game/mods (often root-owned cruft nobody ever
+        # explicitly created or manages, or a stale leftover) - a DIFFERENT,
+        # disconnected directory from the real "mods" category the running
+        # server actually reads from. Uploading there looks like it worked
+        # (or fails with a confusing permission error) either way, and the
+        # server never sees those files.
+        #
+        # Comparing actual root PATHS (not just names) is what keeps this
+        # correct for worlds/modconfigs/players (Terraria/tModLoader): those
+        # categories genuinely resolve to game/worlds etc - the SAME
+        # directory, just reachable two ways - and must stay visible, unlike
+        # mods/plugins/resourcepacks which resolve somewhere else entirely.
+        hidden_names = frozenset()
+        if target == root and category == "game":
+            hidden_names = frozenset(
+                name for name, other_root in self._roots.items() if name != category and other_root != root / name
+            )
+
         entries: list[FileEntry] = []
         for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            if child.name in hidden_names:
+                continue
             if child.is_symlink():
                 continue
             try:

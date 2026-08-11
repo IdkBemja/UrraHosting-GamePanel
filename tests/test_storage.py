@@ -32,6 +32,70 @@ def test_resolve_unknown_category_rejected(tmp_path):
         storage.resolve("nope", "x")
 
 
+def test_list_dir_game_hides_shadowed_mods_that_arent_the_real_category(tmp_path):
+    """mods/plugins/resourcepacks are separate bind mounts overlaid onto
+    game/mods etc. for game-runtime (compose.yml), but not for the
+    dashboard - what dashboard sees at that path is a different,
+    disconnected directory the running server never reads from there.
+    Reported bug: an admin browsed Archivos -> game -> mods (this stray
+    directory, root-owned cruft) instead of the real "mods" category and
+    every upload failed with a confusing permission error; the real fix is
+    to never show this trap in the first place."""
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    (game_root / "server.jar").write_bytes(b"x")
+    stray_mods = game_root / "mods"
+    stray_mods.mkdir()
+    (stray_mods / "orphan.jar").write_bytes(b"x")
+
+    real_mods = tmp_path / "mods"
+    real_mods.mkdir()
+    (real_mods / "real.jar").write_bytes(b"x")
+
+    storage = InstanceStorage(roots={"game": game_root, "mods": real_mods}, max_upload_bytes=10_000_000)
+
+    game_entries = {e.name for e in storage.list_dir("game")}
+    assert "server.jar" in game_entries
+    assert "mods" not in game_entries
+
+    mods_entries = {e.name for e in storage.list_dir("mods")}
+    assert mods_entries == {"real.jar"}
+
+
+def test_list_dir_game_keeps_true_aliases_like_worlds(tmp_path):
+    """worlds/modconfigs/players (Terraria/tModLoader) are genuine aliases
+    for a subfolder of game/ - the SAME directory, just reachable under two
+    category names - not a separate mount, so unlike mods/plugins/
+    resourcepacks they must stay visible when browsing "game"."""
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    worlds_root = game_root / "worlds"
+    worlds_root.mkdir()
+    (worlds_root / "world1.wld").write_bytes(b"x")
+
+    storage = InstanceStorage(roots={"game": game_root, "worlds": worlds_root}, max_upload_bytes=10_000_000)
+
+    assert "worlds" in {e.name for e in storage.list_dir("game")}
+    assert {e.name for e in storage.list_dir("worlds")} == {"world1.wld"}
+
+
+def test_list_dir_shadow_hiding_only_applies_at_games_own_root(tmp_path):
+    """A legitimately nested 'mods' folder two levels down (e.g. a modpack
+    shipping its own config/mods/ directory) must not be swept up by the
+    root-only shadow-hiding rule."""
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    nested = game_root / "config" / "mods"
+    nested.mkdir(parents=True)
+    (nested / "nested.txt").write_text("x")
+
+    real_mods = tmp_path / "mods"
+    real_mods.mkdir()
+
+    storage = InstanceStorage(roots={"game": game_root, "mods": real_mods}, max_upload_bytes=10_000_000)
+    assert "mods" in {e.name for e in storage.list_dir("game", "config")}
+
+
 def test_save_upload_and_list_dir(tmp_path):
     storage = _storage(tmp_path)
     storage.save_upload("game", "", "hello.txt", io.BytesIO(b"hi"), content_length=2)
