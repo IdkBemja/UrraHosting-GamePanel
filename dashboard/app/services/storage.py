@@ -42,6 +42,19 @@ _usage_cache: dict[Path, tuple[float, int]] = {}
 _usage_refreshing: set[Path] = set()
 _usage_lock = threading.Lock()
 
+# Files tab inline text editor (see InstanceStorage.is_editable_path()):
+# curated extensions that are unambiguously plain text, never binaries -
+# deliberately excludes .jar/.zip/.png/etc, which the panel only ever
+# uploads/downloads, never opens as text.
+_EDITABLE_TEXT_EXTENSIONS = frozenset(
+    {"txt", "log", "cfg", "conf", "config", "json", "json5", "jsonc", "yml", "yaml", "toml", "properties", "ini", "list", "mcmeta"}
+)
+# Config files are always small (a few KB, occasionally tens of KB) - this
+# is generous headroom while keeping a runaway/huge log file from being
+# loaded whole into a browser textarea. Anything bigger stays reachable via
+# the existing Descargar button.
+_MAX_EDITABLE_FILE_BYTES = 512 * 1024
+
 
 def _compute_usage(root: Path) -> int:
     total = 0
@@ -90,6 +103,7 @@ class FileEntry:
     is_dir: bool
     size: int
     modified_at: float
+    editable: bool = False
 
 
 def _clear_directory_contents(root: Path) -> list[str]:
@@ -221,6 +235,76 @@ class InstanceStorage:
         candidates = (name for name, other_root in self._roots.items() if name != category and other_root != root / name)
         return sorted(name for name in candidates if (root / name).is_dir())
 
+    def is_editable_path(self, category: str, relative_path: str) -> bool:
+        """Curated allowlist for the Files tab's inline text editor: only
+        mods/ and plugins/ (any file, any depth) and game/config/* (where
+        mods commonly write their own settings after first launch), and
+        only for extensions that are unambiguously plain text. The rest of
+        game/ - server.properties, world data, run.sh, the server jar
+        itself - stays off limits here: server.properties already has its
+        own dedicated, validated flow (the Configuracion tab), and a
+        malformed run.sh or world file edited by hand through a generic
+        text box would break the next launch outright (see installer.py) or
+        corrupt save data, with no validation to catch it before saving."""
+        if not relative_path:
+            return False
+        if category in ("mods", "plugins"):
+            allowed_root = True
+        elif category == "game":
+            cleaned = relative_path.replace("\\", "/").lstrip("/")
+            allowed_root = cleaned == "config" or cleaned.startswith("config/")
+        else:
+            allowed_root = False
+        if not allowed_root:
+            return False
+        suffix = Path(relative_path).suffix.lstrip(".").lower()
+        return suffix in _EDITABLE_TEXT_EXTENSIONS
+
+    def read_text_file(self, category: str, relative_path: str) -> str:
+        if not self.is_editable_path(category, relative_path):
+            raise StorageError("Este archivo no se puede editar desde el panel")
+        target = self.resolve(category, relative_path)
+        if not target.exists() or not target.is_file() or target.is_symlink():
+            raise StorageError("El archivo no existe")
+        try:
+            size = target.stat().st_size
+        except OSError as exc:
+            raise StorageError(f"No se pudo leer el archivo: {exc}") from exc
+        if size > _MAX_EDITABLE_FILE_BYTES:
+            raise StorageError(f"El archivo es demasiado grande para editar aqui (max {_MAX_EDITABLE_FILE_BYTES // 1024} KB)")
+        try:
+            return target.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise StorageError("El archivo no es texto plano (UTF-8); no se puede editar aqui") from exc
+        except OSError as exc:
+            raise StorageError(f"No se pudo leer el archivo: {exc}") from exc
+
+    def write_text_file(self, category: str, relative_path: str, content: str) -> None:
+        if not self.is_editable_path(category, relative_path):
+            raise StorageError("Este archivo no se puede editar desde el panel")
+        target = self.resolve(category, relative_path)
+        if not target.exists() or not target.is_file():
+            raise StorageError("El archivo no existe")
+        if target.is_symlink():
+            raise StorageError("No se permite escribir sobre un symlink")
+
+        encoded = content.encode("utf-8")
+        if len(encoded) > _MAX_EDITABLE_FILE_BYTES:
+            raise StorageError(f"El contenido excede el tamano maximo permitido (max {_MAX_EDITABLE_FILE_BYTES // 1024} KB)")
+        try:
+            current_size = target.stat().st_size
+        except OSError:
+            current_size = 0
+        self.check_quota(len(encoded) - current_size)
+
+        tmp_path = target.with_name(f".{target.name}.part")
+        try:
+            tmp_path.write_bytes(encoded)
+            os.replace(tmp_path, target)
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise StorageError(f"No se pudo guardar el archivo: {exc}") from exc
+
     def list_dir(self, category: str, relative_path: str = "") -> list[FileEntry]:
         target = self.resolve(category, relative_path)
         root = self._root(category)
@@ -241,13 +325,16 @@ class InstanceStorage:
                 stat_result = child.stat()
             except OSError:
                 continue
+            is_dir = child.is_dir()
+            child_path = child.relative_to(root).as_posix()
             entries.append(
                 FileEntry(
                     name=child.name,
-                    path=child.relative_to(root).as_posix(),
-                    is_dir=child.is_dir(),
+                    path=child_path,
+                    is_dir=is_dir,
                     size=stat_result.st_size if child.is_file() else 0,
                     modified_at=stat_result.st_mtime,
+                    editable=False if is_dir else self.is_editable_path(category, child_path),
                 )
             )
         return entries

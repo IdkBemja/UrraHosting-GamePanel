@@ -95,6 +95,42 @@ def download_file(category: str):
     return send_file(target, as_attachment=True, download_name=target.name)
 
 
+@bp.route("/<category>/content", methods=["GET", "POST"])
+@login_required
+def file_content(category: str):
+    """Backs the Files tab's inline text editor - deliberately narrow: only
+    mods/plugins (any depth) and game/config/* qualify at all (see
+    InstanceStorage.is_editable_path()), so this can never be used to
+    hand-edit server.properties, run.sh, world data or anything else the
+    panel itself depends on."""
+    storage = g.storage
+    if request.method == "GET":
+        relative_path = request.args.get("path", "")
+        try:
+            content = storage.read_text_file(category, relative_path)
+        except PathTraversalError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except StorageError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"category": category, "path": relative_path, "content": content})
+
+    payload = request.get_json(silent=True) or {}
+    relative_path = payload.get("path", "")
+    content = payload.get("content")
+    if not isinstance(content, str):
+        return jsonify({"error": "Falta el contenido a guardar"}), 400
+
+    try:
+        storage.write_text_file(category, relative_path, content)
+    except PathTraversalError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except StorageError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    current_app.config["ACTIVITY"].record("file_edit", {"category": category, "path": relative_path})
+    return jsonify({"ok": True})
+
+
 @bp.route("/<category>/delete", methods=["POST"])
 @login_required
 def delete_file(category: str):

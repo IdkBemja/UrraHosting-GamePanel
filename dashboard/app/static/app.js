@@ -514,6 +514,14 @@ async function loadFiles() {
       downloadLink.textContent = "Descargar";
       actionsCell.appendChild(downloadLink);
     }
+    if (entry.editable) {
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn ghost";
+      editBtn.type = "button";
+      editBtn.textContent = "Editar";
+      editBtn.addEventListener("click", () => openFileEditor(category, entry.path, entry.name));
+      actionsCell.appendChild(editBtn);
+    }
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "btn ghost";
     deleteBtn.type = "button";
@@ -539,6 +547,76 @@ async function deleteFile(category, path, name) {
   }
   loadFiles();
 }
+
+/* ---------------------------------------------------------------------- */
+/* Inline text editor (mods/plugins/game/config only - see entry.editable, */
+/* computed server-side by InstanceStorage.is_editable_path())             */
+/* ---------------------------------------------------------------------- */
+
+const fileEditorModal = document.getElementById("fileEditorModal");
+const fileEditorTitle = document.getElementById("fileEditorTitle");
+const fileEditorPath = document.getElementById("fileEditorPath");
+const fileEditorTextarea = document.getElementById("fileEditorTextarea");
+const fileEditorFeedback = document.getElementById("fileEditorFeedback");
+const fileEditorCancel = document.getElementById("fileEditorCancel");
+const fileEditorSave = document.getElementById("fileEditorSave");
+
+let fileEditorContext = null; // { category, path } of the file currently open, or null
+
+async function openFileEditor(category, path, name) {
+  fileEditorContext = { category, path };
+  fileEditorTitle.textContent = `Editar ${name}`;
+  fileEditorPath.textContent = `/${category}/${path}`;
+  fileEditorTextarea.value = "";
+  fileEditorTextarea.disabled = true;
+  fileEditorFeedback.textContent = "Cargando...";
+  fileEditorFeedback.classList.remove("error", "ok");
+  fileEditorModal.classList.remove("is-hidden");
+
+  const { ok, data } = await apiFetch(`/api/files/${category}/content?${new URLSearchParams({ path })}`);
+  fileEditorTextarea.disabled = false;
+  if (!ok || !data) {
+    fileEditorFeedback.textContent = (data && data.error) || "No se pudo cargar el archivo";
+    fileEditorFeedback.classList.add("error");
+    return;
+  }
+  fileEditorTextarea.value = data.content;
+  fileEditorFeedback.textContent = "";
+  fileEditorTextarea.focus();
+}
+
+function closeFileEditor() {
+  fileEditorModal.classList.add("is-hidden");
+  fileEditorContext = null;
+}
+
+fileEditorCancel?.addEventListener("click", closeFileEditor);
+fileEditorModal?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFileEditor();
+});
+
+fileEditorSave?.addEventListener("click", async () => {
+  if (!fileEditorContext) return;
+  fileEditorSave.disabled = true;
+  fileEditorFeedback.textContent = "Guardando...";
+  fileEditorFeedback.classList.remove("error", "ok");
+
+  const { ok, data } = await apiFetch(`/api/files/${fileEditorContext.category}/content`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: fileEditorContext.path, content: fileEditorTextarea.value }),
+  });
+
+  fileEditorSave.disabled = false;
+  if (!ok) {
+    fileEditorFeedback.textContent = (data && data.error) || "No se pudo guardar el archivo";
+    fileEditorFeedback.classList.add("error");
+    return;
+  }
+  fileEditorFeedback.textContent = "Guardado correctamente.";
+  fileEditorFeedback.classList.add("ok");
+  loadFiles();
+});
 
 // Resolves once this ONE file is done (uploaded, skipped by the user on an
 // overwrite prompt, or failed) - never rejects, so uploadFiles() below can

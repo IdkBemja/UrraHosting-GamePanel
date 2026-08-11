@@ -96,6 +96,142 @@ def test_list_dir_shadow_hiding_only_applies_at_games_own_root(tmp_path):
     assert "mods" in {e.name for e in storage.list_dir("game", "config")}
 
 
+# -- Files tab inline text editor (mods/plugins/game/config/* only) ---------
+
+
+def _multi_category_storage(tmp_path, **kwargs):
+    game_root = tmp_path / "game"
+    game_root.mkdir()
+    (game_root / "config").mkdir()
+    mods_root = tmp_path / "mods"
+    mods_root.mkdir()
+    plugins_root = tmp_path / "plugins"
+    plugins_root.mkdir()
+    return InstanceStorage(
+        roots={"game": game_root, "mods": mods_root, "plugins": plugins_root}, max_upload_bytes=10_000_000, **kwargs
+    )
+
+
+def test_is_editable_path_allows_mods_plugins_and_game_config(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    assert storage.is_editable_path("mods", "somemod-common.toml") is True
+    assert storage.is_editable_path("mods", "nested/dir/settings.cfg") is True
+    assert storage.is_editable_path("plugins", "MyPlugin/config.yml") is True
+    assert storage.is_editable_path("game", "config/somemod-common.toml") is True
+    assert storage.is_editable_path("game", "config/nested/dir/values.json") is True
+
+
+def test_is_editable_path_rejects_disallowed_extension(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    assert storage.is_editable_path("mods", "some-mod.jar") is False
+    assert storage.is_editable_path("game", "config/icon.png") is False
+
+
+def test_is_editable_path_rejects_game_outside_config(tmp_path):
+    """server.properties, run.sh, world data etc stay off limits - they
+    either have their own dedicated flow (Configuracion tab) or would be
+    actively dangerous to hand-edit through a generic text box."""
+    storage = _multi_category_storage(tmp_path)
+    assert storage.is_editable_path("game", "server.properties") is False
+    assert storage.is_editable_path("game", "run.sh") is False
+    assert storage.is_editable_path("game", "world/level.dat") is False
+    assert storage.is_editable_path("game", "configuration-typo/x.txt") is False  # must not fuzzy-match "config"
+
+
+def test_is_editable_path_rejects_other_categories(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    assert storage.is_editable_path("resourcepacks", "pack.mcmeta") is False
+
+
+def test_is_editable_path_requires_a_path(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    assert storage.is_editable_path("mods", "") is False
+
+
+def test_read_text_file_roundtrips_allowed_file(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    (storage._root("mods") / "example-common.toml").write_text("value = 1\n", encoding="utf-8")
+    assert storage.read_text_file("mods", "example-common.toml") == "value = 1\n"
+
+
+def test_read_text_file_rejects_disallowed_path(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    (storage._root("game") / "server.properties").write_text("motd=hi\n", encoding="utf-8")
+    with pytest.raises(StorageError):
+        storage.read_text_file("game", "server.properties")
+
+
+def test_read_text_file_rejects_missing_file(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    with pytest.raises(StorageError):
+        storage.read_text_file("mods", "does-not-exist.toml")
+
+
+def test_read_text_file_rejects_oversized_file(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    big = storage._root("mods") / "huge.log"
+    big.write_bytes(b"x" * (512 * 1024 + 1))
+    with pytest.raises(StorageError, match="demasiado grande"):
+        storage.read_text_file("mods", "huge.log")
+
+
+def test_read_text_file_rejects_non_utf8_content(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    binary_like = storage._root("mods") / "weird.cfg"
+    binary_like.write_bytes(b"\xff\xfe\x00\x01broken")
+    with pytest.raises(StorageError, match="texto plano"):
+        storage.read_text_file("mods", "weird.cfg")
+
+
+def test_write_text_file_saves_new_content(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    target = storage._root("plugins") / "cfg.yml"
+    target.write_text("old: true\n", encoding="utf-8")
+
+    storage.write_text_file("plugins", "cfg.yml", "old: false\nnew: 1\n")
+
+    assert target.read_text(encoding="utf-8") == "old: false\nnew: 1\n"
+    assert not target.with_name(".cfg.yml.part").exists()  # tmp file cleaned up
+
+
+def test_write_text_file_rejects_disallowed_path(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    (storage._root("game") / "run.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    with pytest.raises(StorageError):
+        storage.write_text_file("game", "run.sh", "malicious content")
+    assert (storage._root("game") / "run.sh").read_text(encoding="utf-8") == "#!/bin/sh\n"
+
+
+def test_write_text_file_does_not_create_new_files(tmp_path):
+    """The editor edits existing config files - creating brand new ones
+    belongs to the existing upload flow, not a generic save-as-you-type
+    box."""
+    storage = _multi_category_storage(tmp_path)
+    with pytest.raises(StorageError, match="no existe"):
+        storage.write_text_file("mods", "brand-new.toml", "value = 1\n")
+    assert not (storage._root("mods") / "brand-new.toml").exists()
+
+
+def test_write_text_file_rejects_content_over_size_limit(tmp_path):
+    storage = _multi_category_storage(tmp_path)
+    target = storage._root("mods") / "big.cfg"
+    target.write_text("small\n", encoding="utf-8")
+    with pytest.raises(StorageError, match="tamano maximo"):
+        storage.write_text_file("mods", "big.cfg", "x" * (512 * 1024 + 1))
+
+
+def test_write_text_file_enforces_quota_on_size_increase(tmp_path):
+    # usage_bytes() is a background-refreshed cache that starts at 0 (see
+    # storage.py's module docstring) - sizing the delta alone well past the
+    # quota keeps this deterministic regardless of whether the cache has
+    # caught up to the real (tiny) pre-existing usage yet.
+    storage = _multi_category_storage(tmp_path, quota_bytes=10)
+    target = storage._root("mods") / "small.cfg"
+    target.write_text("12345", encoding="utf-8")  # 5 bytes
+    with pytest.raises(StorageError, match="Cuota"):
+        storage.write_text_file("mods", "small.cfg", "x" * 50)  # +45 byte delta, exceeds quota either way
+
+
 def test_save_upload_and_list_dir(tmp_path):
     storage = _storage(tmp_path)
     storage.save_upload("game", "", "hello.txt", io.BytesIO(b"hi"), content_length=2)

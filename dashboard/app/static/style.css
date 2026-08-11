@@ -893,6 +893,33 @@ select:focus-visible,
   margin-top: 1rem;
 }
 
+.file-editor-box {
+  width: min(760px, 94vw);
+}
+
+.file-editor-textarea {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  margin-top: 0.6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  border: 1px solid rgba(226, 88, 34, 0.35);
+  border-radius: 10px;
+  padding: 0.75rem;
+  resize: vertical;
+  white-space: pre;
+  color: var(--text-main);
+  background: #fff8f4;
+}
+
+.file-editor-textarea:focus {
+  border-color: var(--urra-secondary);
+  box-shadow: 0 0 0 3px var(--ring);
+  outline: none;
+}
+
 .danger-text {
   color: #d0342c;
   font-weight: 700;

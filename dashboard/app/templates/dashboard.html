@@ -91,4 +91,16 @@
     </div>
   </div>
 </div>
+<div id="fileEditorModal" class="dialog-overlay is-hidden" role="dialog" aria-modal="true" aria-labelledby="fileEditorTitle">
+  <div class="dialog-box file-editor-box">
+    <h2 id="fileEditorTitle">Editar archivo</h2>
+    <p id="fileEditorPath" class="muted small breadcrumb"></p>
+    <textarea id="fileEditorTextarea" class="file-editor-textarea" spellcheck="false" aria-label="Contenido del archivo"></textarea>
+    <p id="fileEditorFeedback" class="feedback" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button id="fileEditorCancel" class="btn ghost" type="button">Cancelar</button>
+      <button id="fileEditorSave" class="btn" type="button"><i class="bi bi-save2-fill"></i> Guardar</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
