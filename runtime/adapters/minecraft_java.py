@@ -9,6 +9,7 @@ one class per loader.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -117,9 +118,27 @@ class MinecraftJavaAdapter(GameRuntimeAdapter):
             },
         )
 
-    def _resolved_java_bin(self, config, env: Mapping[str, str]) -> str:
+    def _resolved_java_version(self, config, env: Mapping[str, str]) -> str:
         resolved, _warning = runtime_matrix.resolve(config.game_version, (env.get("JAVA_VERSION") or "auto").lower())
-        return f"/opt/java/{resolved}/bin/java"
+        return resolved
+
+    def _resolved_java_bin(self, config, env: Mapping[str, str]) -> str:
+        return f"/opt/java/{self._resolved_java_version(config, env)}/bin/java"
+
+    def launch_env(self, config, env: Mapping[str, str], server_dir: Path) -> dict[str, str]:
+        """run.sh (Forge/NeoForge's official installer output, "script"
+        launch mode) invokes a bare `java` command, PATH-resolved - but this
+        image only ever installs JDKs under /opt/java/<version>/bin (see the
+        base Dockerfile's Temurin matrix), never adds any of them to PATH
+        itself, so that bare `java` call fails outright ("command not
+        found"). "jar" mode never hit this: it invokes java by its resolved
+        absolute path directly (_resolved_java_bin() above), never relying
+        on PATH - applying this to every launch mode uniformly is harmless
+        either way, simpler than conditioning it on the manifest state
+        launch_command() already has to read separately."""
+        java_bin_dir = f"/opt/java/{self._resolved_java_version(config, env)}/bin"
+        current_path = os.environ.get("PATH", "")
+        return {"PATH": f"{java_bin_dir}:{current_path}" if current_path else java_bin_dir}
 
     def launch_command(self, config, env: Mapping[str, str], server_dir: Path) -> list[str]:
         manifest_path = _INSTALL_DIR / "installation.json"
