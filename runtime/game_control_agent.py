@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/opt/urrahosting")
 
+from config import runtime_matrix
 from config.game_config import load_from_environ
 from config.instance_state import effective_environ
 from runtime import rcon
@@ -43,10 +44,19 @@ from runtime.adapters import get_adapter
 from runtime.adapters.base import AdapterConfigError
 
 SERVER_DIR = Path("/data/game")
+# Read-only mount shared with the dashboard's own /data/install (see
+# compose.yml) - the dashboard downloads and checksum-verifies the Forge/
+# NeoForge/BuildTools installer jar and drops it here (world-readable, same
+# convention as config/instance_state.py's write_override()) so this agent
+# can run it locally without the jar ever crossing the network a second
+# time.
+INSTALL_DIR = Path("/data/install")
 CONTROL_PORT = int(os.environ.get("GAME_CONTROL_PORT", "8081"))
 MAX_COMMAND_LENGTH = 1500
 _RATE_LIMIT_WINDOW = 10.0
 _RATE_LIMIT_MAX = 20
+_INSTALLER_TIMEOUT = 900.0
+_MAX_INSTALLER_OUTPUT = 4000
 
 
 def log(message: str) -> None:
@@ -162,6 +172,42 @@ class Supervisor:
             except subprocess.TimeoutExpired:
                 self.process.kill()
 
+    def run_installer_jar(self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str]) -> dict:
+        """Runs a Forge/NeoForge/BuildTools installer jar as a subprocess of
+        THIS container, not the dashboard's - so it gets the instance's own
+        game plan memory budget (GAME_MEMORY_LIMIT/GAME_MEMORY_RESERVATION)
+        instead of the dashboard's much smaller, fixed DASHBOARD_MEMORY_LIMIT
+        (a plain -Xmx alone can't fix that: a cgroup memory limit caps the
+        whole container regardless of what heap size the JVM inside it asks
+        for). The caller (dashboard/app/services/installer.py, over the
+        /lifecycle/install route below) already downloaded and checksum-
+        verified the jar into the install/ bind mount both containers share -
+        this only ever reads it back from there, never over the network."""
+        if not jar_name or jar_name in (".", "..") or "/" in jar_name or "\\" in jar_name:
+            return {"ok": False, "error": "jar_name invalido"}
+        jar_path = INSTALL_DIR / jar_name
+        if not jar_path.is_file():
+            return {"ok": False, "error": f"'{jar_name}' no existe en {INSTALL_DIR}"}
+
+        java_version = (self.env.get("JAVA_VERSION") or "auto").lower()
+        try:
+            resolved, _warning = runtime_matrix.resolve(minecraft_version, java_version)
+        except runtime_matrix.UnsupportedJavaError as exc:
+            return {"ok": False, "error": str(exc)}
+        java_bin = f"/opt/java/{resolved}/bin/java"
+
+        command = [java_bin, f"-Xmx{heap_mb}m", "-jar", str(jar_path), *args]
+        log(f"Ejecutando instalador: {' '.join(command)}")
+        try:
+            completed = subprocess.run(
+                command, cwd=SERVER_DIR, capture_output=True, text=True, timeout=_INSTALLER_TIMEOUT, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"ok": False, "error": f"No se pudo ejecutar el instalador: {exc}"}
+
+        output = (completed.stderr or completed.stdout or "").strip()
+        return {"ok": True, "returncode": completed.returncode, "output": output[-_MAX_INSTALLER_OUTPUT:]}
+
     def check_rate_limit(self) -> bool:
         now = time.monotonic()
         with self._rate_lock:
@@ -202,9 +248,16 @@ def _make_handler(supervisor: Supervisor):
             self._write_json(404, {"error": "no encontrado"})
 
         def do_POST(self):
-            if self.path != "/command":
+            if self.path == "/command":
+                self._handle_command()
+            elif self.path == "/lifecycle/stop":
+                self._handle_lifecycle_stop()
+            elif self.path == "/lifecycle/install":
+                self._handle_lifecycle_install()
+            else:
                 self._write_json(404, {"error": "no encontrado"})
-                return
+
+        def _handle_command(self) -> None:
             if self._unauthorized():
                 return
             if not supervisor.check_rate_limit():
@@ -228,6 +281,45 @@ def _make_handler(supervisor: Supervisor):
                 return
 
             result = supervisor.send_command(command)
+            self._write_json(200 if result.get("ok") else 502, result)
+
+        def _handle_lifecycle_stop(self) -> None:
+            # Stops only the child game process - the agent/container stay
+            # up, unlike a `docker stop` of the whole container (see
+            # Supervisor's module docstring: the main loop exits once the
+            # child exits, which a full container stop also triggers via
+            # SIGTERM). Used by the dashboard before a Forge/NeoForge/
+            # BuildTools install so it can then call /lifecycle/install
+            # against this same, still-alive agent.
+            if self._unauthorized():
+                return
+            supervisor.graceful_stop()
+            self._write_json(200, {"ok": True, "running": supervisor.is_running()})
+
+        def _handle_lifecycle_install(self) -> None:
+            if self._unauthorized():
+                return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            if length <= 0 or length > 4096:
+                self._write_json(400, {"error": "cuerpo invalido"})
+                return
+            raw = self.rfile.read(length)
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                self._write_json(400, {"error": "JSON invalido"})
+                return
+
+            jar_name = str(payload.get("jar_name", ""))
+            minecraft_version = str(payload.get("minecraft_version", ""))
+            heap_mb = payload.get("heap_mb")
+            args = payload.get("args") or []
+            valid_args = isinstance(args, list) and all(isinstance(item, str) for item in args)
+            if not minecraft_version or not isinstance(heap_mb, int) or heap_mb <= 0 or not valid_args:
+                self._write_json(400, {"error": "parametros invalidos"})
+                return
+
+            result = supervisor.run_installer_jar(jar_name, minecraft_version, heap_mb, args)
             self._write_json(200 if result.get("ok") else 502, result)
 
     return Handler

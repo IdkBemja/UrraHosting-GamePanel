@@ -10,6 +10,26 @@ install kinds:
   "zip"        - Bedrock/Terraria/tModLoader: extract a full server
                  distribution.
 
+"installer" (Forge/NeoForge) needs to run a real JVM to do its post-install
+mapping-merge work - too heavy for the dashboard's own DASHBOARD_MEMORY_LIMIT,
+which this platform stack sizes as a small, roughly fixed slice of the
+instance's total plan (independent of how much the admin gave the game
+itself) rather than something safe to inflate per-install. It instead runs
+inside the game-runtime container's control agent
+(runtime/game_control_agent.py, over its token-authed /lifecycle/* HTTP
+routes - never `docker exec`, which this dashboard's docker-proxy has
+disabled on purpose), under a heap sized off GAME_MEMORY_RESERVATION: that
+container's memory budget already matches what the admin actually
+provisioned for this game, and it sits idle for the whole install (nothing
+else is competing for it) since _ensure_game_runtime_idle() stops the
+running game process first.
+
+"buildtools" (Spigot/CraftBukkit) still compiles locally in the dashboard
+container for now - it needs a writable scratch directory for its Maven
+build tree, and the only writable mount game-runtime shares is game/ itself,
+which would leave gigabytes of build artifacts sitting in the live server
+directory. Its own JVM heap is still bounded by DASHBOARD_MEMORY_LIMIT.
+
 Every (re)install is a CLEAN install: whatever is currently in game/ is
 snapshotted first (so "Revertir" can still restore it) and then deleted
 entirely before the new software is put in place - by request, replacing an
@@ -37,16 +57,40 @@ from pathlib import Path
 import requests
 
 from config import runtime_matrix
+from runtime.adapters.base import memory_to_mb
 
 from .archive_extract import ArchiveError, extract_archive
 from .catalog import ALL_ALLOWED_HOSTS, CatalogError, CatalogService, DownloadInfo
 from .catalog.base import request_allowlisted
+from .docker_client import DockerControlError, InstanceDockerClient
+from .game_control import GameControlClient, GameControlError
 
 _USER_AGENT = "UrraHosting-GamePanel/1.0 (+self-hosted)"
 _DOWNLOAD_TIMEOUT = 30
 _CHUNK_SIZE = 1024 * 1024
+# Same ratio runtime/adapters/minecraft_java.py uses for the game server's
+# own heap relative to GAME_MEMORY_LIMIT - reused here (against
+# GAME_MEMORY_RESERVATION instead, the floor rather than the ceiling, since
+# the installer runs alone with nothing else competing for memory) so the
+# two don't drift into different, unexplained ratios.
+_INSTALLER_HEAP_RATIO = 0.75
+_INSTALLER_HEAP_FLOOR_MB = 512
+# How long _ensure_game_runtime_idle() waits for the control agent to answer
+# /health after starting a container that was fully stopped - it needs to
+# bind its HTTP server before anything can be sent to it.
+_AGENT_HEALTH_TIMEOUT = 45.0
+# BuildTools (Spigot/CraftBukkit) still runs locally in the dashboard
+# container (see the module docstring) - this just picks the Java major
+# version its compile actually needs, same matrix the game-runtime launch
+# path and the (now agent-side) Forge/NeoForge install use.
+_BUILDTOOLS_JAVA_VERSION = "auto"
 
 _install_lock = threading.Lock()
+
+
+def _java_bin_for(minecraft_version: str) -> str:
+    resolved, _warning = runtime_matrix.resolve(minecraft_version, _BUILDTOOLS_JAVA_VERSION)
+    return f"/opt/java/{resolved}/bin/java"
 
 
 class InstallError(RuntimeError):
@@ -107,11 +151,25 @@ class InstallResult:
 
 
 class Installer:
-    def __init__(self, catalog: CatalogService, game_dir: Path, install_dir: Path, max_bytes: int):
+    def __init__(
+        self,
+        catalog: CatalogService,
+        game_dir: Path,
+        install_dir: Path,
+        max_bytes: int,
+        docker_client: InstanceDockerClient | None = None,
+        game_control: GameControlClient | None = None,
+    ):
         self._catalog = catalog
         self._game_dir = Path(game_dir).resolve()
         self._install_dir = Path(install_dir).resolve()
         self._max_bytes = max_bytes
+        # Only needed for "installer"/"buildtools" kinds (see
+        # _ensure_game_runtime_idle()) - None is fine for callers (tests,
+        # anything only ever installing jar/zip kinds) that never exercise
+        # that path.
+        self._docker_client = docker_client
+        self._game_control = game_control
         self.progress = InstallProgress()
 
     def install(
@@ -123,18 +181,29 @@ class Installer:
         channel: str,
         actor: str,
         create_backup: bool = True,
+        game_memory_reservation: str = "1G",
     ) -> InstallResult:
         if not _install_lock.acquire(blocking=False):
             raise InstallError("Ya hay una instalacion en curso para esta instancia, espera a que termine")
         try:
-            return self._install_locked(game_family, game_edition, game_software, version, channel, actor, create_backup)
+            return self._install_locked(
+                game_family, game_edition, game_software, version, channel, actor, create_backup, game_memory_reservation
+            )
         finally:
             _install_lock.release()
 
     # -- dispatch -----------------------------------------------------------
 
     def _install_locked(
-        self, game_family: str, game_edition: str, game_software: str, version: str, channel: str, actor: str, create_backup: bool
+        self,
+        game_family: str,
+        game_edition: str,
+        game_software: str,
+        version: str,
+        channel: str,
+        actor: str,
+        create_backup: bool,
+        game_memory_reservation: str,
     ) -> InstallResult:
         self.progress.update("resolving", f"Buscando la descarga de {game_software} {version}...")
         download = self._catalog.get_download(game_family, game_edition, game_software, version, channel)
@@ -144,6 +213,13 @@ class Installer:
         self._game_dir.mkdir(parents=True, exist_ok=True)
         self._install_dir.mkdir(parents=True, exist_ok=True)
 
+        # Forge/NeoForge run their installer JVM inside the game-runtime
+        # container (see the module docstring) - it must be up, with any old
+        # game process stopped, BEFORE the wipe below so nothing still has
+        # the old files open.
+        if download.install_kind == "installer":
+            self._ensure_game_runtime_idle()
+
         snapshot_path, wipe_warnings = self._snapshot_and_clean_game_dir(create_backup)
 
         if download.install_kind == "jar":
@@ -151,7 +227,7 @@ class Installer:
         elif download.install_kind == "buildtools":
             result = self._install_buildtools(download, game_software, version, channel)
         elif download.install_kind == "installer":
-            result = self._install_forge(download, game_software, version, channel)
+            result = self._install_forge(download, game_software, version, channel, game_memory_reservation)
         elif download.install_kind == "zip":
             result = self._install_zip(download, game_software, version, channel)
         else:
@@ -162,6 +238,61 @@ class Installer:
         result.warnings = wipe_warnings
         self._write_manifest(result)
         return result
+
+    def _ensure_game_runtime_idle(self) -> None:
+        """Brings the game-runtime container up (if it was fully stopped)
+        and makes sure no game process is running in it, WITHOUT stopping
+        the container itself - the control agent needs to stay reachable so
+        _install_forge()/_install_buildtools() can hand it the installer jar
+        right after. A plain `docker stop` (what the catalog blueprint does
+        for jar/zip kinds) would take the agent down with it; this only ever
+        stops the child process (agent's /lifecycle/stop, same mechanism as
+        graceful_stop() on SIGTERM)."""
+        if self._docker_client is None or self._game_control is None:
+            raise InstallError("Este Installer no tiene acceso al contenedor del juego (docker_client/game_control)")
+
+        self.progress.update("preparing_runtime", "Preparando el contenedor del juego para instalar...")
+        try:
+            status = self._docker_client.status()
+        except DockerControlError as exc:
+            raise InstallError(f"No se pudo consultar el contenedor del juego: {exc}") from exc
+
+        if not status["running"]:
+            try:
+                self._docker_client.start()
+            except DockerControlError as exc:
+                raise InstallError(f"No se pudo iniciar el contenedor del juego para instalar: {exc}") from exc
+            self._wait_for_agent_health()
+
+        try:
+            health = self._game_control.health()
+        except GameControlError as exc:
+            raise InstallError(f"No se pudo contactar al agente del contenedor del juego: {exc}") from exc
+
+        if health.get("running"):
+            # A valid install from before this reinstall may have just been
+            # auto-launched by the container starting above (or was already
+            # running) - stop it before we start overwriting its files.
+            self.progress.update("stopping", "Deteniendo el proceso del juego actual...")
+            try:
+                self._game_control.stop_game()
+            except GameControlError as exc:
+                raise InstallError(f"No se pudo detener el proceso del juego antes de instalar: {exc}") from exc
+
+    def _wait_for_agent_health(self) -> None:
+        deadline = time.monotonic() + _AGENT_HEALTH_TIMEOUT
+        last_exc: GameControlError | None = None
+        while time.monotonic() < deadline:
+            try:
+                self._game_control.health()
+                return
+            except GameControlError as exc:
+                last_exc = exc
+                time.sleep(1.0)
+        raise InstallError(f"El agente del contenedor del juego no respondio a tiempo: {last_exc}")
+
+    def _installer_heap_mb(self, game_memory_reservation: str) -> int:
+        return max(int(memory_to_mb(game_memory_reservation) * _INSTALLER_HEAP_RATIO), _INSTALLER_HEAP_FLOOR_MB)
 
     def _snapshot_and_clean_game_dir(self, create_backup: bool) -> tuple[Path | None, list[str]]:
         """Every (re)install is a clean install now: whatever is in game/
@@ -310,25 +441,34 @@ class Installer:
 
     # -- forge/neoforge installer ---------------------------------------
 
-    def _install_forge(self, download: DownloadInfo, game_software: str, version: str, channel: str) -> InstallResult:
+    def _install_forge(
+        self, download: DownloadInfo, game_software: str, version: str, channel: str, game_memory_reservation: str
+    ) -> InstallResult:
         tmp_fd, tmp_path_str = tempfile.mkstemp(dir=self._install_dir, prefix=".installer-", suffix=".jar")
         tmp_path = Path(tmp_path_str)
         try:
             checksum = self._download_and_hash(download, tmp_fd, tmp_path)
+            # World-readable so the game-runtime container - a different uid
+            # entirely, no uid is shared between the two containers - can
+            # read it back over the install/ bind mount both sides see. Same
+            # convention as config/instance_state.py's write_override(): it's
+            # just a public installer jar, nothing sensitive in it.
+            tmp_path.chmod(0o644)
             self.progress.update("running_installer", "Ejecutando el instalador oficial...")
+            assert self._game_control is not None  # guaranteed by _ensure_game_runtime_idle() above in _install_locked
             try:
-                completed = subprocess.run(
-                    [_java_bin_for(download.minecraft_version), "-jar", str(tmp_path), "--installServer"],
-                    cwd=self._game_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=900,
-                    check=False,
+                result = self._game_control.run_installer(
+                    jar_name=tmp_path.name,
+                    minecraft_version=download.minecraft_version or "",
+                    heap_mb=self._installer_heap_mb(game_memory_reservation),
+                    args=["--installServer"],
                 )
-            except (OSError, subprocess.TimeoutExpired) as exc:
+            except GameControlError as exc:
                 raise InstallError(f"El instalador no pudo ejecutarse: {exc}") from exc
-            if completed.returncode != 0 or not (self._game_dir / "run.sh").exists():
-                detail = (completed.stderr or completed.stdout or "").strip()
+            if not result.get("ok"):
+                raise InstallError(f"El instalador no pudo ejecutarse: {result.get('error', 'error desconocido')}")
+            if result.get("returncode") != 0 or not (self._game_dir / "run.sh").exists():
+                detail = (result.get("output") or "").strip()
                 suffix = f": {detail[-2000:]}" if detail else ""
                 raise InstallError(f"El instalador no genero run.sh correctamente{suffix}")
             (self._game_dir / "run.sh").chmod(0o755)

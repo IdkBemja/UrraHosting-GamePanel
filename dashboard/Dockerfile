@@ -6,9 +6,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# gosu only here; Java comes from the Temurin matrix below (BuildTools.jar
-# and the Forge/NeoForge installer jars run from the dashboard, not the
-# game-runtime container - plan.md section 4.4).
+# The Forge/NeoForge installer jar now runs inside the game-runtime
+# container instead (via its control agent's /lifecycle/install - see
+# runtime/game_control_agent.py and dashboard/app/services/installer.py):
+# that container's memory budget matches the instance's actual game plan
+# (GAME_MEMORY_RESERVATION/GAME_MEMORY_LIMIT), unlike this one's small, fixed
+# DASHBOARD_MEMORY_LIMIT, which previously made a mapping-merge-heavy install
+# OOM regardless of which loader version was selected.
+# BuildTools.jar (Spigot/CraftBukkit) still compiles locally here (it needs a
+# writable scratch dir for its Maven build tree that only this container's
+# own, disposable filesystem provides - see the module docstring on
+# services/installer.py), hence Java stays installed below.
 # `gamedata` (fixed GID 10002, also created in the base Dockerfile for the
 # game-runtime image) is a supplementary group shared with the `game` user
 # over there - see the comment on that Dockerfile's groupadd for why. It
@@ -22,14 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 	&& usermod -aG gamedata dashboard
 
 # Same Temurin major-version matrix as the game-runtime image (see that
-# Dockerfile's comment): BuildTools/Forge/NeoForge installers need to run
-# under a Java as new as the Minecraft version they target (e.g. NeoForge
-# 21.1.x/MC 1.21.1 needs Java 21) - a single fixed JRE (previously
-# default-jre-headless, Java 17 on this base image) made every installer run
-# for a version newer than that fail silently, surfacing as "El instalador
-# no genero run.sh correctamente" regardless of which NeoForge/Forge version
-# was actually selected. installer.py resolves the right one per-install via
-# config/runtime_matrix.py, same as the game-runtime launch path.
+# Dockerfile's comment) - BuildTools needs to run under a Java as new as the
+# Minecraft revision it's compiling.
 RUN set -eux; \
 	for v in 8 16 17 21 25; do \
 		mkdir -p "/opt/java/${v}"; \

@@ -83,19 +83,27 @@ def install():
 
     is_reprovision = (game_family, game_edition) != (config.game_family, config.game_edition)
     docker_client = current_app.config["DOCKER_CLIENT"]
+    # Forge/NeoForge run their installer JVM inside the game-runtime
+    # container itself (dashboard/app/services/installer.py -
+    # Installer._ensure_game_runtime_idle()), which needs that container's
+    # control agent alive THROUGHOUT the install to hand it the jar - it
+    # stops only the old child process, never the whole container, so the
+    # generic full stop below must not run for these two.
+    is_managed_installer = software in {"forge", "neoforge"}
 
     progress.update("preparing", "Preparando instalacion...")
 
     # Stop first: a live process of the OLD game/software must never keep
     # running against files an install is about to replace out from under it.
-    try:
-        status = docker_client.status()
-        if status["running"]:
-            progress.update("stopping", "Deteniendo el servidor actual...")
-            docker_client.stop(timeout=60)
-    except DockerControlError as exc:
-        progress.finish(False, f"No se pudo detener la instancia antes de instalar: {exc}")
-        return jsonify({"error": f"No se pudo detener la instancia antes de instalar: {exc}"}), 502
+    if not is_managed_installer:
+        try:
+            status = docker_client.status()
+            if status["running"]:
+                progress.update("stopping", "Deteniendo el servidor actual...")
+                docker_client.stop(timeout=60)
+        except DockerControlError as exc:
+            progress.finish(False, f"No se pudo detener la instancia antes de instalar: {exc}")
+            return jsonify({"error": f"No se pudo detener la instancia antes de instalar: {exc}"}), 502
 
     # Every (re)install is a clean install now (by request: the Software tab
     # warns about this in red before confirming). installer.install() itself
@@ -120,6 +128,7 @@ def install():
             channel,
             current_app.config.get("CURRENT_USER", "admin"),
             create_backup=create_backup,
+            game_memory_reservation=config.game_memory_reservation,
         )
     except (CatalogError, InstallError, OSError) as exc:
         current_app.config["ACTIVITY"].record(
@@ -165,11 +174,29 @@ def install():
     if restart_after or is_reprovision:
         progress.update("restarting", "Reiniciando la instancia...")
         try:
-            docker_client.start()
+            # Forge/NeoForge kept the container running throughout the
+            # install (see is_managed_installer above) so the agent could
+            # run it - it never relaunched the game process itself, so
+            # docker_client.start() here would be a no-op on an
+            # already-running container. restart() is what actually picks
+            # up the freshly installed run.sh.
+            if is_managed_installer:
+                docker_client.restart(timeout=60)
+            else:
+                docker_client.start()
             response["restarted"] = True
         except DockerControlError as exc:
             response["restarted"] = False
             response["restart_error"] = str(exc)
+    elif is_managed_installer:
+        # Admin asked to leave it stopped. Unlike every other install kind
+        # (whose pre-install stop above already left the container off),
+        # Forge/NeoForge kept it running for the agent-driven install -
+        # stop it now so "leave it off" means the same thing either way.
+        try:
+            docker_client.stop(timeout=60)
+        except DockerControlError as exc:
+            all_warnings.append(f"No se pudo detener la instancia tras instalar: {exc}")
 
     progress.finish(True, "Instalacion completada correctamente")
     return jsonify(response)

@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 from app.services import installer as inst
 from app.services.catalog import DownloadInfo
+from app.services.docker_client import DockerControlError
+from app.services.game_control import GameControlError
 
 
 class _FakeStreamResponse:
@@ -434,3 +436,175 @@ def test_clean_wipe_recovers_from_readonly_leftover_file(tmp_path, monkeypatch):
     assert (game_dir / "bedrock_server").read_bytes() == b"new-binary-content"
     assert not (game_dir / "behavior_packs").exists()
     assert result.snapshot_path is not None
+
+
+# -- Forge/NeoForge via the game-runtime control agent -----------------------
+
+
+class _FakeDockerClient:
+    def __init__(self, running: bool):
+        self.running = running
+        self.calls: list[str] = []
+
+    def status(self):
+        self.calls.append("status")
+        return {"status": "running" if self.running else "exited", "running": self.running, "started_at": ""}
+
+    def start(self):
+        self.calls.append("start")
+        self.running = True
+
+    def stop(self, timeout=60):
+        self.calls.append("stop")
+        self.running = False
+
+    def restart(self, timeout=60):
+        self.calls.append("restart")
+        self.running = True
+
+
+class _FakeGameControl:
+    def __init__(self, game_dir: Path, child_running: bool, run_result: dict | None = None):
+        self.game_dir = game_dir
+        self.child_running = child_running
+        self.run_result = run_result
+        self.calls: list[str] = []
+
+    def health(self):
+        self.calls.append("health")
+        return {"status": "ok", "running": self.child_running}
+
+    def stop_game(self):
+        self.calls.append("stop_game")
+        self.child_running = False
+        return {"ok": True, "running": False}
+
+    def run_installer(self, jar_name, minecraft_version, heap_mb, args):
+        self.calls.append("run_installer")
+        self.last_call = {"jar_name": jar_name, "minecraft_version": minecraft_version, "heap_mb": heap_mb, "args": args}
+        if self.run_result is not None:
+            return self.run_result
+        (self.game_dir / "run.sh").write_text("#!/usr/bin/env sh\njava @user_jvm_args.txt ...\n")
+        return {"ok": True, "returncode": 0, "output": "Installed successfully"}
+
+
+def test_forge_install_stops_child_and_runs_via_agent(tmp_path, monkeypatch):
+    game_dir = tmp_path / "game"
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(
+        url="https://maven.neoforged.net/x-installer.jar",
+        filename="neoforge-installer.jar",
+        install_kind="installer",
+        minecraft_version="1.21.1",
+    )
+    docker_client = _FakeDockerClient(running=True)
+    game_control = _FakeGameControl(game_dir, child_running=True)
+    installer = inst.Installer(
+        _FakeCatalog(download), game_dir, tmp_path / "install", max_bytes=10_000_000, docker_client=docker_client, game_control=game_control
+    )
+
+    result = installer.install(
+        "minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester", game_memory_reservation="1G"
+    )
+
+    assert result.launch_mode == "script"
+    assert (game_dir / "run.sh").exists()
+    # Was running -> agent's child gets stopped, container itself never does.
+    assert "stop" not in docker_client.calls
+    assert game_control.calls == ["health", "stop_game", "run_installer"]
+    assert game_control.last_call["minecraft_version"] == "1.21.1"
+    # 0.75 * 1024MB (1G), matching the ratio runtime/adapters/minecraft_java.py
+    # uses for the game server's own heap relative to GAME_MEMORY_LIMIT.
+    assert game_control.last_call["heap_mb"] == int(1024 * 0.75)
+
+
+def test_forge_install_starts_stopped_container_before_installing(tmp_path, monkeypatch):
+    game_dir = tmp_path / "game"
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
+    docker_client = _FakeDockerClient(running=False)
+    game_control = _FakeGameControl(game_dir, child_running=False)
+    installer = inst.Installer(
+        _FakeCatalog(download), game_dir, tmp_path / "install", max_bytes=10_000_000, docker_client=docker_client, game_control=game_control
+    )
+
+    installer.install("minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester")
+
+    assert docker_client.calls == ["status", "start"]
+    assert game_control.calls == ["health", "health", "run_installer"]  # one from the post-start wait, one from the running check
+
+
+def test_forge_install_raises_when_run_sh_missing(tmp_path, monkeypatch):
+    """Reproduces the reported bug's failure mode: the agent's installer run
+    finished (ok=True) but never produced run.sh (e.g. a real-world
+    OutOfMemoryError inside the installer's own post-processing) - this must
+    surface as InstallError with the installer's captured output, not a
+    silent 'success'."""
+    game_dir = tmp_path / "game"
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
+    docker_client = _FakeDockerClient(running=True)
+    game_control = _FakeGameControl(
+        game_dir,
+        child_running=False,
+        run_result={"ok": True, "returncode": 1, "output": "OutOfMemoryError: Java heap space"},
+    )
+    installer = inst.Installer(
+        _FakeCatalog(download), game_dir, tmp_path / "install", max_bytes=10_000_000, docker_client=docker_client, game_control=game_control
+    )
+
+    with pytest.raises(inst.InstallError, match="OutOfMemoryError"):
+        installer.install("minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester")
+
+
+def test_forge_install_without_agent_deps_raises_clearly(tmp_path, monkeypatch):
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
+    installer = inst.Installer(_FakeCatalog(download), tmp_path / "game", tmp_path / "install", max_bytes=10_000_000)
+
+    with pytest.raises(inst.InstallError):
+        installer.install("minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester")
+
+
+def test_forge_install_surfaces_docker_control_error(tmp_path, monkeypatch):
+    game_dir = tmp_path / "game"
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
+
+    class _FailingDockerClient(_FakeDockerClient):
+        def status(self):
+            raise DockerControlError("docker-proxy no disponible")
+
+    installer = inst.Installer(
+        _FakeCatalog(download),
+        game_dir,
+        tmp_path / "install",
+        max_bytes=10_000_000,
+        docker_client=_FailingDockerClient(running=True),
+        game_control=_FakeGameControl(game_dir, child_running=False),
+    )
+
+    with pytest.raises(inst.InstallError, match="docker-proxy no disponible"):
+        installer.install("minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester")
+
+
+def test_forge_install_surfaces_game_control_error(tmp_path, monkeypatch):
+    game_dir = tmp_path / "game"
+    _patch_download(monkeypatch, b"fake installer jar bytes")
+    download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
+
+    class _FailingGameControl(_FakeGameControl):
+        def run_installer(self, jar_name, minecraft_version, heap_mb, args):
+            raise GameControlError("token invalido")
+
+    installer = inst.Installer(
+        _FakeCatalog(download),
+        game_dir,
+        tmp_path / "install",
+        max_bytes=10_000_000,
+        docker_client=_FakeDockerClient(running=True),
+        game_control=_FailingGameControl(game_dir, child_running=False),
+    )
+
+    with pytest.raises(inst.InstallError, match="token invalido"):
+        installer.install("minecraft", "java", "neoforge", "21.1.248", "stable", actor="tester")

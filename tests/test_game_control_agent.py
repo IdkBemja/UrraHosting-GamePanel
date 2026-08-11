@@ -114,3 +114,72 @@ def test_graceful_stop_sends_stop_command_then_waits(monkeypatch):
     supervisor.graceful_stop(grace_seconds=5)
     assert sent == ["stop"]
     assert fake.terminated is False  # stopped cleanly, no need to force-terminate
+
+
+class _FakeCompletedProcess:
+    def __init__(self, returncode=0, stdout="ok", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_run_installer_jar_rejects_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    supervisor = _make_supervisor(monkeypatch)
+
+    result = supervisor.run_installer_jar("../evil.jar", "1.21.1", 512, [])
+    assert result["ok"] is False
+
+
+def test_run_installer_jar_missing_file_reports_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    supervisor = _make_supervisor(monkeypatch)
+
+    result = supervisor.run_installer_jar("missing.jar", "1.21.1", 512, [])
+    assert result["ok"] is False
+    assert "missing.jar" in result["error"]
+
+
+def test_run_installer_jar_resolves_java_by_minecraft_version_and_sets_heap(monkeypatch, tmp_path):
+    """NeoForge 21.1.x targets Minecraft 1.21.1, which config/runtime_matrix.py
+    maps to Java 21 - this is the exact fix for "El instalador no genero
+    run.sh correctamente": the installer must run under a Java new enough
+    for the target Minecraft version, with an explicit heap sized from
+    GAME_MEMORY_RESERVATION (see installer.py's _installer_heap_mb)."""
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    (tmp_path / "neoforge-installer.jar").write_bytes(b"fake jar")
+
+    captured = {}
+
+    def fake_run(command, cwd, capture_output, text, timeout, check):
+        captured["command"] = command
+        captured["cwd"] = cwd
+        return _FakeCompletedProcess(returncode=0, stdout="Installed successfully")
+
+    monkeypatch.setattr(gca.subprocess, "run", fake_run)
+    supervisor = _make_supervisor(monkeypatch)
+
+    result = supervisor.run_installer_jar("neoforge-installer.jar", "1.21.1", 1536, ["--installServer"])
+
+    assert result == {"ok": True, "returncode": 0, "output": "Installed successfully"}
+    assert captured["command"][0] == "/opt/java/21/bin/java"
+    assert captured["command"][1] == "-Xmx1536m"
+    assert captured["command"][-1] == "--installServer"
+    assert captured["cwd"] == tmp_path
+
+
+def test_run_installer_jar_reports_subprocess_launch_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    (tmp_path / "installer.jar").write_bytes(b"fake jar")
+
+    def fake_run(*args, **kwargs):
+        raise OSError("java: not found")
+
+    monkeypatch.setattr(gca.subprocess, "run", fake_run)
+    supervisor = _make_supervisor(monkeypatch)
+
+    result = supervisor.run_installer_jar("installer.jar", "1.21.1", 512, [])
+    assert result["ok"] is False
+    assert "not found" in result["error"]

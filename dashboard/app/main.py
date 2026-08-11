@@ -157,6 +157,8 @@ def create_app() -> Flask:
         game_dir=_DATA_ROOT / "game",
         install_dir=install_dir,
         max_bytes=app.config["MAX_CONTENT_LENGTH"],
+        docker_client=app.config["DOCKER_CLIENT"],
+        game_control=app.config["GAME_CONTROL"],
     )
     app.config["INSTALL_DIR"] = install_dir
     app.config["BACKUPS_DIR"] = backups_dir
