@@ -19,6 +19,7 @@ from .blueprints.dashboard import bp as dashboard_bp
 from .blueprints.files import bp as files_bp
 from .blueprints.health import bp as health_bp
 from .blueprints.overview import bp as overview_bp
+from .blueprints.settings import bp as settings_bp
 from .blueprints.users import bp as users_bp
 from .extensions import csrf, limiter
 from .services.activity import ActivityLog
@@ -171,6 +172,7 @@ def create_app() -> Flask:
     app.register_blueprint(catalog_bp)
     app.register_blueprint(backups_bp)
     app.register_blueprint(overview_bp)
+    app.register_blueprint(settings_bp)
     app.register_blueprint(users_bp)
     app.register_blueprint(health_bp)
 

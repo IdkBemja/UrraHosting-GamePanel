@@ -15,7 +15,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, g, jsonify, request
 
 from config.game_config import catalog_structure, is_valid_combo
-from config.instance_state import write_override
+from config.instance_state import remove_override_keys, write_override
 
 from ..services.catalog import CatalogError
 from ..services.docker_client import DockerControlError
@@ -139,6 +139,15 @@ def install():
         return jsonify({"error": str(exc)}), 400
 
     progress.update("writing_config", "Guardando configuracion...")
+    override_path = current_app.config["INSTALL_DIR"] / "instance_override.json"
+    if is_reprovision:
+        # DIFFICULTY/GAMEMODE/ONLINE_MODE (Configuracion tab) are validated
+        # against the OLD adapter's own rules (runtime/adapters/*.py) - a
+        # saved value can be meaningless or outright invalid for the new
+        # game/edition (Terraria's difficulty values aren't Minecraft's),
+        # so they must not silently carry over. MOTD/MAX_PLAYERS are
+        # universal and are left as they are.
+        remove_override_keys({"DIFFICULTY", "GAMEMODE", "ONLINE_MODE"}, path=override_path)
     # Written only after a successful install, so a failed install never
     # leaves the override pointing at software that isn't actually there.
     write_override(
@@ -149,7 +158,7 @@ def install():
             "GAME_VERSION": version,
             "CHANNEL": channel,
         },
-        path=current_app.config["INSTALL_DIR"] / "instance_override.json",
+        path=override_path,
     )
 
     current_app.config["ACTIVITY"].record(

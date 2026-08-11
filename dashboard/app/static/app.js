@@ -43,7 +43,7 @@ function activateTab(name, { focus = false } = {}) {
   if (!loadedTabs.has(name) && tabLoaders[name]) {
     loadedTabs.add(name);
     tabLoaders[name]();
-  } else if (tabLoaders[name] && (name === "activity" || name === "software" || name === "backups")) {
+  } else if (tabLoaders[name] && (name === "activity" || name === "software" || name === "settings" || name === "backups")) {
     tabLoaders[name]();
   }
 }
@@ -1035,6 +1035,130 @@ rollbackButton?.addEventListener("click", async () => {
 });
 
 /* ---------------------------------------------------------------------- */
+/* Configuracion (curated safe settings)                                   */
+/* ---------------------------------------------------------------------- */
+
+const settingsForm = document.getElementById("settingsForm");
+const settingsFeedback = document.getElementById("settingsFeedback");
+const settingsRestartBanner = document.getElementById("settingsRestartBanner");
+const settingsRestartNow = document.getElementById("settingsRestartNow");
+
+// The backend (dashboard/app/blueprints/settings.py) decides exactly which
+// fields apply to the current game/edition and their type/options/bounds -
+// this only renders whatever schema it returns, so a new adapter or a new
+// safe setting never needs a matching change here.
+function buildSettingsField(field) {
+  const wrap = document.createElement("div");
+  wrap.className = field.type === "bool" ? "settings-field settings-field-bool" : "settings-field";
+  const id = `setting-${field.key}`;
+
+  let input;
+  if (field.type === "enum") {
+    input = document.createElement("select");
+    for (const option of field.options) {
+      const opt = document.createElement("option");
+      opt.value = option;
+      opt.textContent = option;
+      opt.selected = option === field.value;
+      input.appendChild(opt);
+    }
+  } else if (field.type === "bool") {
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(field.value);
+  } else if (field.type === "int") {
+    input = document.createElement("input");
+    input.type = "number";
+    if (typeof field.min === "number") input.min = String(field.min);
+    if (typeof field.max === "number") input.max = String(field.max);
+    input.value = field.value;
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    if (field.max_length) input.maxLength = field.max_length;
+    input.value = field.value;
+  }
+  input.id = id;
+  input.dataset.key = field.key;
+  input.dataset.type = field.type;
+
+  const label = document.createElement("label");
+  label.setAttribute("for", id);
+  label.textContent = field.label;
+
+  if (field.type === "bool") {
+    wrap.append(input, label);
+  } else {
+    wrap.append(label, input);
+  }
+  return wrap;
+}
+
+async function loadSettings() {
+  if (!settingsForm) return;
+  settingsRestartBanner.classList.add("is-hidden");
+  const { ok, data } = await apiFetch("/api/settings");
+  if (!ok || !data) return;
+
+  settingsForm.innerHTML = "";
+  for (const field of data.settings) {
+    settingsForm.appendChild(buildSettingsField(field));
+  }
+
+  if (data.settings.length) {
+    const actions = document.createElement("div");
+    actions.className = "settings-actions";
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "submit";
+    saveBtn.className = "btn";
+    saveBtn.innerHTML = '<i class="bi bi-save2-fill"></i> Guardar cambios';
+    actions.appendChild(saveBtn);
+    settingsForm.appendChild(actions);
+    settingsFeedback.textContent = "";
+  } else {
+    settingsFeedback.textContent = "Este juego no tiene ajustes editables por ahora.";
+  }
+  settingsFeedback.classList.remove("error", "ok");
+}
+
+settingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {};
+  for (const input of settingsForm.querySelectorAll("[data-key]")) {
+    const key = input.dataset.key;
+    if (input.dataset.type === "bool") payload[key] = input.checked;
+    else if (input.dataset.type === "int") payload[key] = Number(input.value);
+    else payload[key] = input.value;
+  }
+
+  settingsFeedback.textContent = "Guardando...";
+  settingsFeedback.classList.remove("error", "ok");
+  settingsRestartBanner.classList.add("is-hidden");
+
+  const { ok, data } = await apiFetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!ok) {
+    settingsFeedback.textContent = (data && data.error) || "No se pudieron guardar los ajustes";
+    settingsFeedback.classList.add("error");
+    return;
+  }
+  settingsFeedback.textContent = "Ajustes guardados correctamente.";
+  settingsFeedback.classList.add("ok");
+  if (data.restart_required) settingsRestartBanner.classList.remove("is-hidden");
+});
+
+settingsRestartNow?.addEventListener("click", async () => {
+  settingsRestartNow.disabled = true;
+  await performAction("restart");
+  settingsRestartBanner.classList.add("is-hidden");
+  settingsRestartNow.disabled = false;
+});
+
+/* ---------------------------------------------------------------------- */
 /* Backups                                                                  */
 /* ---------------------------------------------------------------------- */
 
@@ -1218,6 +1342,7 @@ tabLoaders.software = () => {
   loadCatalogTree();
   loadInstallationDetails();
 };
+tabLoaders.settings = loadSettings;
 tabLoaders.backups = loadBackups;
 tabLoaders.activity = loadActivity;
 tabLoaders.users = loadUsers;

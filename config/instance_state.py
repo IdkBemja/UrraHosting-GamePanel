@@ -30,10 +30,22 @@ from pathlib import Path
 
 DEFAULT_OVERRIDE_PATH = Path("/data/install/instance_override.json")
 
+# Reprovision identity - changing any of these is what the Software tab does.
+IDENTITY_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME_VERSION", "CHANNEL"})
+# Curated, safe-to-self-serve gameplay settings (dashboard/app/blueprints/
+# settings.py's "Configuracion" tab) - deliberately NOT the whole of
+# server.properties/serverconfig.txt: no ports, paths, world/level name or
+# credentials here, only values each runtime/adapters/*.py implementation
+# already treats as plain gameplay knobs in its own validate_extra(). Not
+# every key applies to every adapter (e.g. ONLINE_MODE only exists for
+# Minecraft Java) - settings.py's _applicable_keys() is the actual per-game
+# whitelist; this frozenset is just the outer bound both read_override() and
+# write_override() enforce.
+SETTINGS_KEYS = frozenset({"MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE", "ONLINE_MODE"})
 # Only these keys may ever come from the override file. Secrets, ports,
 # resource limits, etc. always come from the real process environment -
 # the override file cannot be used to smuggle a different secret in.
-OVERRIDABLE_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME_VERSION", "CHANNEL"})
+OVERRIDABLE_KEYS = IDENTITY_KEYS | SETTINGS_KEYS
 
 
 def read_override(path: Path = DEFAULT_OVERRIDE_PATH) -> dict[str, str]:
@@ -48,13 +60,22 @@ def read_override(path: Path = DEFAULT_OVERRIDE_PATH) -> dict[str, str]:
     return {k: v for k, v in data.items() if k in OVERRIDABLE_KEYS and isinstance(v, str)}
 
 
-def write_override(values: Mapping[str, str], path: Path = DEFAULT_OVERRIDE_PATH) -> None:
+def write_override(values: Mapping[str, str], path: Path = DEFAULT_OVERRIDE_PATH, *, merge: bool = True) -> None:
+    """Writes `values` into the override file. Merges with whatever is
+    already there by default - reprovisioning (identity keys) and the
+    Configuracion tab (settings keys) are two independent callers that must
+    not clobber each other's fields; pass merge=False to replace the file
+    outright (rarely needed - see remove_override_keys() for dropping keys
+    without touching the rest)."""
     unknown = set(values) - OVERRIDABLE_KEYS
     if unknown:
         raise ValueError(f"Claves no permitidas en el override de instancia: {sorted(unknown)}")
 
+    merged = dict(read_override(path)) if merge else {}
+    merged.update({k: str(v) for k, v in values.items()})
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({k: str(v) for k, v in values.items()}, indent=2)
+    payload = json.dumps(merged, indent=2)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".instance-override-", suffix=".json")
     try:
         # tempfile.mkstemp() creates the file 0600 (owner-only) by default.
@@ -71,6 +92,20 @@ def write_override(values: Mapping[str, str], path: Path = DEFAULT_OVERRIDE_PATH
     except Exception:
         Path(tmp_name).unlink(missing_ok=True)
         raise
+
+
+def remove_override_keys(keys: frozenset[str] | set[str], path: Path = DEFAULT_OVERRIDE_PATH) -> None:
+    """Drops `keys` from the override file, keeping every other field as-is.
+    Used when reprovisioning to a different game/edition/software (see
+    dashboard/app/blueprints/catalog.py): a saved DIFFICULTY/GAMEMODE value
+    can be meaningless or outright invalid for the new adapter (Terraria's
+    difficulty values aren't Minecraft's), so those must not silently carry
+    over - MOTD/MAX_PLAYERS are universal and are left untouched."""
+    current = read_override(path)
+    remaining = {k: v for k, v in current.items() if k not in keys}
+    if remaining == current:
+        return
+    write_override(remaining, path=path, merge=False)
 
 
 def clear_override(path: Path = DEFAULT_OVERRIDE_PATH) -> None:

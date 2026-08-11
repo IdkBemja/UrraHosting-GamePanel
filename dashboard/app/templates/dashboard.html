@@ -11,6 +11,7 @@
       <button class="tab-btn" role="tab" id="tab-btn-console" aria-controls="tab-console" aria-selected="false" data-tab="console" tabindex="-1"><i class="bi bi-terminal-fill"></i><span>Consola</span></button>
       <button class="tab-btn" role="tab" id="tab-btn-files" aria-controls="tab-files" aria-selected="false" data-tab="files" tabindex="-1"><i class="bi bi-folder-fill"></i><span>Archivos</span></button>
       <button class="tab-btn" role="tab" id="tab-btn-software" aria-controls="tab-software" aria-selected="false" data-tab="software" tabindex="-1"><i class="bi bi-box-seam-fill"></i><span>Software</span></button>
+      <button class="tab-btn" role="tab" id="tab-btn-settings" aria-controls="tab-settings" aria-selected="false" data-tab="settings" tabindex="-1"><i class="bi bi-sliders"></i><span>Configuración</span></button>
       <button class="tab-btn" role="tab" id="tab-btn-backups" aria-controls="tab-backups" aria-selected="false" data-tab="backups" tabindex="-1"><i class="bi bi-archive-fill"></i><span>Backups</span></button>
       <button class="tab-btn" role="tab" id="tab-btn-activity" aria-controls="tab-activity" aria-selected="false" data-tab="activity" tabindex="-1"><i class="bi bi-clock-history"></i><span>Actividad</span></button>
       {% if session.get('role') == 'admin' %}<button class="tab-btn" role="tab" id="tab-btn-users" aria-controls="tab-users" aria-selected="false" data-tab="users" tabindex="-1"><i class="bi bi-people-fill"></i><span>Usuarios</span></button>{% endif %}
@@ -53,6 +54,17 @@
           <div class="catalog-actions"><label for="catalogChannel">Canal</label><select id="catalogChannel"><option value="stable">Estable</option><option value="preview">Preview</option></select><button id="catalogSearch" class="btn" type="button"><i class="bi bi-search"></i> Buscar versiones</button><span id="catalogVersionHint" class="muted small"></span></div>
           <div class="install-form is-hidden" id="installForm"><label for="catalogVersion">Version disponible</label><input type="text" id="catalogVersionFilter" class="catalog-version-filter" placeholder="Filtrar por version, ej. 21.2.248" autocomplete="off"><select id="catalogVersion" size="8"></select><label class="checkbox-label"><input type="checkbox" id="catalogBackup" checked> Crear copia de seguridad antes de reinstalar</label><label class="checkbox-label"><input type="checkbox" id="catalogRestart" checked> Reiniciar automaticamente tras instalar</label><button id="installButton" class="btn" type="button"><i class="bi bi-download"></i> Instalar</button><button id="rollbackButton" class="btn ghost" type="button"><i class="bi bi-arrow-counterclockwise"></i> Revertir a la instalacion anterior</button></div>
           <p id="installFeedback" class="feedback" aria-live="polite"></p>
+        </section>
+      </section>
+      <section class="tab-panel is-hidden tab-panel-custom" id="tab-settings" role="tabpanel" aria-labelledby="tab-btn-settings" hidden>
+        <section class="card">
+          <div class="card-heading"><i class="bi bi-sliders"></i><div><h2>Configuración del servidor</h2><p class="muted">Ajustes basicos y seguros de tu instancia. No incluye puertos, credenciales ni rutas: eso lo administra el panel automaticamente. Los cambios se guardan de inmediato pero necesitan reiniciar la instancia para aplicarse.</p></div></div>
+          <form id="settingsForm" class="settings-form"></form>
+          <p id="settingsFeedback" class="feedback" aria-live="polite"></p>
+          <div id="settingsRestartBanner" class="restart-banner is-hidden">
+            <span><i class="bi bi-arrow-repeat"></i> Guardado. Reinicia el servidor para aplicar los cambios.</span>
+            <button id="settingsRestartNow" class="btn btn-restart" type="button"><i class="bi bi-arrow-clockwise"></i> Reiniciar ahora</button>
+          </div>
         </section>
       </section>
       <section class="tab-panel is-hidden" id="tab-backups" role="tabpanel" aria-labelledby="tab-btn-backups" hidden><section class="card"><div class="card-heading-2"><div><i class="bi bi-archive"></i><div><h2>Backups</h2><p class="muted">Crea, descarga y restaura copias del directorio de juego. Restaurar requiere detener el servidor primero.</p></div></div><button id="createBackupButton" class="btn" type="button"><i class="bi bi-plus-circle"></i> Crear backup</button></div><p id="backupFeedback" class="feedback" aria-live="polite"></p><table class="file-table" id="backupsTable"><caption class="sr-only">Listado de backups</caption><thead><tr><th>Fecha</th><th>Tamaño</th><th>Actor</th><th>Acciones</th></tr></thead><tbody id="backupsTableBody"></tbody></table><p id="backupsEmptyState" class="empty-state is-hidden">No hay backups todavia.</p></section></section>
