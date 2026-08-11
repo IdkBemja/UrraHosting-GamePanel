@@ -591,6 +591,9 @@ const catalogSearch = document.getElementById("catalogSearch");
 const catalogChannel = document.getElementById("catalogChannel");
 const installForm = document.getElementById("installForm");
 const catalogVersion = document.getElementById("catalogVersion");
+const catalogVersionFilter = document.getElementById("catalogVersionFilter");
+const catalogVersionHint = document.getElementById("catalogVersionHint");
+let allCatalogVersions = [];
 const catalogRestart = document.getElementById("catalogRestart");
 const catalogBackup = document.getElementById("catalogBackup");
 const installButton = document.getElementById("installButton");
@@ -740,12 +743,34 @@ async function loadCatalogTree() {
   selectGame(currentGameFamily || (catalogTree[0] && catalogTree[0].family));
 }
 
+function renderCatalogVersionOptions(filterText) {
+  const query = (filterText || "").trim().toLowerCase();
+  const matches = query ? allCatalogVersions.filter((version) => version.toLowerCase().includes(query)) : allCatalogVersions;
+
+  catalogVersion.innerHTML = "";
+  for (const version of matches) {
+    const option = document.createElement("option");
+    option.value = version;
+    option.textContent = version;
+    catalogVersion.appendChild(option);
+  }
+
+  if (catalogVersionHint) {
+    catalogVersionHint.textContent = query
+      ? `${matches.length} de ${allCatalogVersions.length} version(es) coinciden con "${filterText.trim()}".`
+      : "";
+  }
+}
+
 async function loadCatalogVersions() {
   if (!catalogVersion || !selectedGame || !selectedSoftware) return;
   const editionSegment = selectedEdition || "-";
   const channel = catalogChannel.value;
 
+  allCatalogVersions = [];
   catalogVersion.innerHTML = "";
+  if (catalogVersionFilter) catalogVersionFilter.value = "";
+  if (catalogVersionHint) catalogVersionHint.textContent = "";
   installFeedback.textContent = "Buscando versiones disponibles...";
   installFeedback.classList.remove("error", "ok");
   catalogSearch.disabled = true;
@@ -756,16 +781,14 @@ async function loadCatalogVersions() {
     installFeedback.classList.add("error");
     return;
   }
-  for (const version of data.versions) {
-    const option = document.createElement("option");
-    option.value = version;
-    option.textContent = version;
-    catalogVersion.appendChild(option);
-  }
+  allCatalogVersions = data.versions;
+  renderCatalogVersionOptions("");
   installForm.classList.remove("is-hidden");
   installFeedback.textContent = `${data.versions.length} version(es) disponibles para ${selectedSoftware} (${channel}).`;
   installFeedback.classList.add("ok");
 }
+
+catalogVersionFilter?.addEventListener("input", () => renderCatalogVersionOptions(catalogVersionFilter.value));
 
 /* ---------------------------------------------------------------------- */
 /* Install progress modal                                                  */

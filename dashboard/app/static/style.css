@@ -720,6 +720,17 @@ select:focus-visible,
   padding: 0.55rem 0.7rem;
 }
 
+.install-form select[size] {
+  padding: 0.3rem;
+}
+
+.catalog-version-filter {
+  border: 1px solid rgba(226, 88, 34, 0.35);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  font: inherit;
+}
+
 /* ---- Activity tab ---- */
 .activity-list {
   list-style: none;
