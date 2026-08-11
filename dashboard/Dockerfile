@@ -73,4 +73,12 @@ EXPOSE ${DASHBOARD_PORT}
 # permission bits are never inherited by files created inside it, so this
 # is the only thing that keeps new files group-writable regardless of
 # which group they land in.
-CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups && (chown -R dashboard:dashboard /data/panel /data/install /data/backups || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --threads 8 --timeout 1900 'app.main:create_app()'"]
+# /data/uploads is exclusively this container's (game-runtime never mounts
+# it) - still needs the same mkdir+chown treatment as panel/install/backups,
+# since Docker auto-creates a missing bind-mount source directory as
+# root:root on the host, which this non-root user can't write into without
+# it. DATA_DIR/game itself and its mods/plugins/resourcepacks bind mounts
+# are NOT chowned from here on purpose - game-runtime's entrypoint.sh (which
+# starts first, see compose.yml's depends_on) already does that, since those
+# also need to be writable by ITS uid, which this chown alone could not do.
+CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups /data/uploads && (chown -R dashboard:dashboard /data/panel /data/install /data/backups /data/uploads || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --threads 8 --timeout 1900 'app.main:create_app()'"]
