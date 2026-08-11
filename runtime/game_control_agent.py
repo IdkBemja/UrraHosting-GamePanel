@@ -172,7 +172,9 @@ class Supervisor:
             except subprocess.TimeoutExpired:
                 self.process.kill()
 
-    def run_installer_jar(self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str]) -> dict:
+    def run_installer_jar(
+        self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str], chmod_executable: str | None = None
+    ) -> dict:
         """Runs a Forge/NeoForge/BuildTools installer jar as a subprocess of
         THIS container, not the dashboard's - so it gets the instance's own
         game plan memory budget (GAME_MEMORY_LIMIT/GAME_MEMORY_RESERVATION)
@@ -182,12 +184,22 @@ class Supervisor:
         for). The caller (dashboard/app/services/installer.py, over the
         /lifecycle/install route below) already downloaded and checksum-
         verified the jar into the install/ bind mount both containers share -
-        this only ever reads it back from there, never over the network."""
+        this only ever reads it back from there, never over the network.
+
+        `chmod_executable`, if given, is a filename relative to SERVER_DIR
+        (e.g. "run.sh") to chmod 0o755 once the subprocess finishes - this
+        agent's own uid owns whatever the installer just wrote there, while
+        the dashboard's uid does not (no uid is shared between the two
+        containers), so only this side can actually do that chmod."""
         if not jar_name or jar_name in (".", "..") or "/" in jar_name or "\\" in jar_name:
             return {"ok": False, "error": "jar_name invalido"}
         jar_path = INSTALL_DIR / jar_name
         if not jar_path.is_file():
             return {"ok": False, "error": f"'{jar_name}' no existe en {INSTALL_DIR}"}
+        if chmod_executable is not None and (
+            not chmod_executable or chmod_executable in (".", "..") or "/" in chmod_executable or "\\" in chmod_executable
+        ):
+            return {"ok": False, "error": "chmod_executable invalido"}
 
         java_version = (self.env.get("JAVA_VERSION") or "auto").lower()
         try:
@@ -204,6 +216,14 @@ class Supervisor:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"ok": False, "error": f"No se pudo ejecutar el instalador: {exc}"}
+
+        if chmod_executable:
+            target = SERVER_DIR / chmod_executable
+            if target.is_file():
+                try:
+                    target.chmod(0o755)
+                except OSError as exc:
+                    log(f"advertencia: no se pudo chmod +x '{chmod_executable}': {exc}")
 
         output = (completed.stderr or completed.stdout or "").strip()
         return {"ok": True, "returncode": completed.returncode, "output": output[-_MAX_INSTALLER_OUTPUT:]}
@@ -314,12 +334,14 @@ def _make_handler(supervisor: Supervisor):
             minecraft_version = str(payload.get("minecraft_version", ""))
             heap_mb = payload.get("heap_mb")
             args = payload.get("args") or []
+            chmod_executable = payload.get("chmod_executable")
             valid_args = isinstance(args, list) and all(isinstance(item, str) for item in args)
-            if not minecraft_version or not isinstance(heap_mb, int) or heap_mb <= 0 or not valid_args:
+            valid_chmod = chmod_executable is None or isinstance(chmod_executable, str)
+            if not minecraft_version or not isinstance(heap_mb, int) or heap_mb <= 0 or not valid_args or not valid_chmod:
                 self._write_json(400, {"error": "parametros invalidos"})
                 return
 
-            result = supervisor.run_installer_jar(jar_name, minecraft_version, heap_mb, args)
+            result = supervisor.run_installer_jar(jar_name, minecraft_version, heap_mb, args, chmod_executable)
             self._write_json(200 if result.get("ok") else 502, result)
 
     return Handler

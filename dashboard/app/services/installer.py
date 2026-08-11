@@ -462,6 +462,12 @@ class Installer:
                     minecraft_version=download.minecraft_version or "",
                     heap_mb=self._installer_heap_mb(game_memory_reservation),
                     args=["--installServer"],
+                    # The agent's own uid owns whatever the installer just
+                    # wrote under game/ - the dashboard's uid does not (no
+                    # uid is shared between the two containers), so only the
+                    # agent side can chmod it; see run_installer_jar()'s
+                    # docstring in game_control_agent.py.
+                    chmod_executable="run.sh",
                 )
             except GameControlError as exc:
                 raise InstallError(f"El instalador no pudo ejecutarse: {exc}") from exc
@@ -471,7 +477,6 @@ class Installer:
                 detail = (result.get("output") or "").strip()
                 suffix = f": {detail[-2000:]}" if detail else ""
                 raise InstallError(f"El instalador no genero run.sh correctamente{suffix}")
-            (self._game_dir / "run.sh").chmod(0o755)
         finally:
             tmp_path.unlink(missing_ok=True)
 

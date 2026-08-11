@@ -345,6 +345,15 @@ input:focus {
   background: linear-gradient(120deg, #bf2b2b, #eb4d4d);
 }
 
+.btn.discord {
+  background: linear-gradient(120deg, #2563eb, #3b82f6);
+  text-decoration: none;
+}
+
+.crash-modal-actions {
+  flex-wrap: wrap;
+}
+
 .btn-start {
   background: linear-gradient(120deg, #16a34a, #22c55e);
 }

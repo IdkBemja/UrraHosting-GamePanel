@@ -52,15 +52,29 @@ class GameControlClient:
         this same, still-alive agent right after."""
         return self._post("/lifecycle/stop", {}, timeout=_STOP_TIMEOUT)
 
-    def run_installer(self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str]) -> dict:
+    def run_installer(
+        self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str], chmod_executable: str | None = None
+    ) -> dict:
         """Runs a Forge/NeoForge/BuildTools installer jar the caller already
         downloaded and checksum-verified into the install/ bind mount both
         containers share (see installer.py) - inside the game-runtime
         container, under a heap sized off GAME_MEMORY_RESERVATION rather than
-        the dashboard's own, much smaller DASHBOARD_MEMORY_LIMIT."""
+        the dashboard's own, much smaller DASHBOARD_MEMORY_LIMIT.
+
+        `chmod_executable`, if given, is a filename the agent should chmod
+        0o755 once the install finishes (e.g. "run.sh") - the dashboard's uid
+        never owns files the installer wrote inside the game-runtime
+        container, so it cannot chmod them itself; only the agent's own uid
+        can."""
         return self._post(
             "/lifecycle/install",
-            {"jar_name": jar_name, "minecraft_version": minecraft_version, "heap_mb": heap_mb, "args": args},
+            {
+                "jar_name": jar_name,
+                "minecraft_version": minecraft_version,
+                "heap_mb": heap_mb,
+                "args": args,
+                "chmod_executable": chmod_executable,
+            },
             timeout=_INSTALL_TIMEOUT,
         )
 

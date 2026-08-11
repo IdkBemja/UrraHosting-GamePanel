@@ -3,6 +3,8 @@ limiting. `start()` (which actually spawns the game server subprocess) is
 never called here - these tests build a Supervisor and swap in a fake
 `process` object, exactly the seam the real HTTP handler goes through."""
 
+import os
+
 import runtime.game_control_agent as gca
 from tests.conftest import base_env
 
@@ -183,3 +185,36 @@ def test_run_installer_jar_reports_subprocess_launch_failure(monkeypatch, tmp_pa
     result = supervisor.run_installer_jar("installer.jar", "1.21.1", 512, [])
     assert result["ok"] is False
     assert "not found" in result["error"]
+
+
+def test_run_installer_jar_chmods_the_requested_output_after_success(monkeypatch, tmp_path):
+    """The agent's own uid owns whatever the installer just wrote under
+    SERVER_DIR - the dashboard's uid does not (no uid is shared between the
+    two containers) - so chmod +x on e.g. run.sh must happen here, not on
+    the dashboard side (that used to fail with "[Errno 1] Operation not
+    permitted")."""
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    (tmp_path / "installer.jar").write_bytes(b"fake jar")
+    run_sh = tmp_path / "run.sh"
+    run_sh.write_text("#!/usr/bin/env sh\n")
+    run_sh.chmod(0o644)
+
+    monkeypatch.setattr(gca.subprocess, "run", lambda *a, **k: _FakeCompletedProcess(returncode=0, stdout="ok"))
+    supervisor = _make_supervisor(monkeypatch)
+
+    result = supervisor.run_installer_jar("installer.jar", "1.21.1", 512, ["--installServer"], chmod_executable="run.sh")
+
+    assert result["ok"] is True
+    if os.name != "nt":  # chmod bits aren't meaningful on Windows dev machines
+        assert run_sh.stat().st_mode & 0o777 == 0o755
+
+
+def test_run_installer_jar_rejects_chmod_path_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "INSTALL_DIR", tmp_path)
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    (tmp_path / "installer.jar").write_bytes(b"fake jar")
+
+    supervisor = _make_supervisor(monkeypatch)
+    result = supervisor.run_installer_jar("installer.jar", "1.21.1", 512, [], chmod_executable="../evil.sh")
+    assert result["ok"] is False

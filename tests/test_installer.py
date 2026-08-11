@@ -479,9 +479,15 @@ class _FakeGameControl:
         self.child_running = False
         return {"ok": True, "running": False}
 
-    def run_installer(self, jar_name, minecraft_version, heap_mb, args):
+    def run_installer(self, jar_name, minecraft_version, heap_mb, args, chmod_executable=None):
         self.calls.append("run_installer")
-        self.last_call = {"jar_name": jar_name, "minecraft_version": minecraft_version, "heap_mb": heap_mb, "args": args}
+        self.last_call = {
+            "jar_name": jar_name,
+            "minecraft_version": minecraft_version,
+            "heap_mb": heap_mb,
+            "args": args,
+            "chmod_executable": chmod_executable,
+        }
         if self.run_result is not None:
             return self.run_result
         (self.game_dir / "run.sh").write_text("#!/usr/bin/env sh\njava @user_jvm_args.txt ...\n")
@@ -512,6 +518,10 @@ def test_forge_install_stops_child_and_runs_via_agent(tmp_path, monkeypatch):
     # Was running -> agent's child gets stopped, container itself never does.
     assert "stop" not in docker_client.calls
     assert game_control.calls == ["health", "stop_game", "run_installer"]
+    # chmod +x happens agent-side (its uid owns run.sh, the dashboard's does
+    # not) - never a local chmod() on the dashboard side, which would fail
+    # with EPERM against a file owned by the other container's uid.
+    assert game_control.last_call["chmod_executable"] == "run.sh"
     assert game_control.last_call["minecraft_version"] == "1.21.1"
     # 0.75 * 1024MB (1G), matching the ratio runtime/adapters/minecraft_java.py
     # uses for the game server's own heap relative to GAME_MEMORY_LIMIT.
@@ -594,7 +604,7 @@ def test_forge_install_surfaces_game_control_error(tmp_path, monkeypatch):
     download = DownloadInfo(url="https://x/installer.jar", filename="x.jar", install_kind="installer", minecraft_version="1.21.1")
 
     class _FailingGameControl(_FakeGameControl):
-        def run_installer(self, jar_name, minecraft_version, heap_mb, args):
+        def run_installer(self, jar_name, minecraft_version, heap_mb, args, chmod_executable=None):
             raise GameControlError("token invalido")
 
     installer = inst.Installer(

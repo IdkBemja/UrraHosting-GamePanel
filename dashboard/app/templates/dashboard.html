@@ -68,4 +68,15 @@
 </div>
 <div id="confirmDialog" class="dialog-overlay is-hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirmDialogTitle" aria-describedby="confirmDialogBody"><div class="dialog-box"><h2 id="confirmDialogTitle">Confirmar accion</h2><p id="confirmDialogBody"></p><p id="confirmDialogDanger" class="danger-text is-hidden"></p><div class="dialog-actions"><button id="confirmDialogCancel" class="btn ghost" type="button">Cancelar</button><button id="confirmDialogAccept" class="btn danger" type="button">Confirmar</button></div></div></div>
 <div id="installProgressModal" class="dialog-overlay is-hidden" role="alertdialog" aria-modal="true" aria-labelledby="installProgressTitle" aria-describedby="installProgressMessage"><div class="dialog-box"><h2 id="installProgressTitle">Instalando...</h2><div class="progress-track"><div id="installProgressBar" class="progress-fill is-indeterminate"></div></div><p id="installProgressMessage" class="muted">Preparando instalacion...</p><div class="dialog-actions"><button id="installProgressClose" class="btn ghost is-hidden" type="button">Cerrar</button></div></div></div>
+<div id="crashModal" class="dialog-overlay is-hidden" role="alertdialog" aria-modal="true" aria-labelledby="crashModalTitle" aria-describedby="crashModalBody">
+  <div class="dialog-box">
+    <h2 id="crashModalTitle">Ups, algo no anda bien</h2>
+    <p id="crashModalBody" class="muted">Ocurrio un error inesperado y no pudimos completar la operacion. Puedes descargar el registro completo para tu soporte tecnico o contactarnos directamente por Discord.</p>
+    <div class="dialog-actions crash-modal-actions">
+      <button id="crashModalDownload" class="btn ghost" type="button"><i class="bi bi-download"></i> Descargar log</button>
+      <a id="crashModalDiscord" class="btn discord" href="https://discord.urrahosting.cl" target="_blank" rel="noopener noreferrer"><i class="bi bi-discord"></i> Contactar Discord</a>
+      <button id="crashModalClose" class="btn ghost" type="button">Cerrar</button>
+    </div>
+  </div>
+</div>
 {% endblock %}

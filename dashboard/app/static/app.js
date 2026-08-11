@@ -863,6 +863,76 @@ function hideInstallProgressModal({ ok, message } = {}) {
 
 installProgressClose?.addEventListener("click", () => installProgressModal.classList.add("is-hidden"));
 
+/* ---------------------------------------------------------------------- */
+/* Crash report modal                                                      */
+/* ---------------------------------------------------------------------- */
+
+// Shown instead of raw backend error text for the install/rollback flow
+// (installer.py can surface real subprocess output/stack traces there,
+// e.g. a NeoForge OutOfMemoryError trace - useful for support, not for an
+// end user). Other feedback spots in this file (file manager, users,
+// backups) keep their own short, actionable messages as-is; those are
+// normal validation errors, not the kind of technical detail this dialog
+// is for.
+const GENERIC_ERROR_MESSAGE = "No se pudo completar la operacion. Descarga el registro o contacta a soporte si el problema persiste.";
+
+const crashModal = document.getElementById("crashModal");
+const crashModalDownload = document.getElementById("crashModalDownload");
+const crashModalClose = document.getElementById("crashModalClose");
+let crashModalTrigger = null;
+let lastCrashLog = "";
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function crashLogFilename(now) {
+  const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}_${pad2(now.getHours())}-${pad2(now.getMinutes())}-${pad2(now.getSeconds())}`;
+  return `GamePanel_CrashReport_${stamp}.log`;
+}
+
+function showCrashModal(context, detail) {
+  const now = new Date();
+  lastCrashLog = [
+    "UrraHosting GamePanel - Reporte de error",
+    `Fecha: ${now.toISOString()}`,
+    `Contexto: ${context}`,
+    `URL: ${window.location.href}`,
+    "",
+    "Detalle:",
+    detail || "(sin detalle adicional)",
+  ].join("\n");
+  lastCrashLog += `\n\n-- fin del reporte, filename sugerido: ${crashLogFilename(now)} --`;
+
+  if (!crashModal) return;
+  crashModalTrigger = document.activeElement;
+  crashModal.classList.remove("is-hidden");
+  crashModalClose?.focus();
+}
+
+function closeCrashModal() {
+  crashModal?.classList.add("is-hidden");
+  if (crashModalTrigger && typeof crashModalTrigger.focus === "function") crashModalTrigger.focus();
+  crashModalTrigger = null;
+}
+
+crashModalDownload?.addEventListener("click", () => {
+  const blob = new Blob([lastCrashLog], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = crashLogFilename(new Date());
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+});
+
+crashModalClose?.addEventListener("click", closeCrashModal);
+crashModal?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeCrashModal();
+});
+
 async function loadInstallationDetails() {
   const { ok, data } = await apiFetch("/api/catalog/installation");
   if (!ok || !data) return;
@@ -917,18 +987,24 @@ installButton?.addEventListener("click", async () => {
 
   installButton.disabled = false;
   const warnings = ok && data && data.warnings ? data.warnings : [];
-  const message = ok
-    ? warnings.length
-      ? `Instalado correctamente. Advertencia: ${warnings.join(" ")}`
-      : "Instalado correctamente."
-    : (data && data.error) || "No se pudo instalar";
-  installFeedback.textContent = message;
-  installFeedback.classList.toggle("ok", ok);
-  installFeedback.classList.toggle("error", !ok);
-  hideInstallProgressModal({ ok, message });
+
   if (ok) {
+    const message = warnings.length ? `Instalado correctamente. Advertencia: ${warnings.join(" ")}` : "Instalado correctamente.";
+    installFeedback.textContent = message;
+    installFeedback.classList.add("ok");
+    installFeedback.classList.remove("error");
+    hideInstallProgressModal({ ok: true, message });
     currentGameFamily = selectedGame;
     currentGameEdition = selectedEdition;
+  } else {
+    installFeedback.textContent = GENERIC_ERROR_MESSAGE;
+    installFeedback.classList.add("error");
+    installFeedback.classList.remove("ok");
+    hideInstallProgressModal();
+    showCrashModal(
+      `Instalacion de software (${selectedGame}${selectedEdition ? "/" + selectedEdition : ""} - ${selectedSoftware} ${version}, canal ${channel})`,
+      (data && data.error) || "No se pudo instalar"
+    );
   }
   loadInstallationDetails();
   loadOverview();
@@ -939,7 +1015,17 @@ rollbackButton?.addEventListener("click", async () => {
   if (!confirmed) return;
   showInstallProgressModal("Revirtiendo instalacion");
   const { ok, data } = await apiFetch("/api/catalog/install/rollback", { method: "POST" });
-  const message = ok ? "Instalacion revertida." : (data && data.error) || "No se pudo revertir";
+  if (!ok) {
+    installFeedback.textContent = GENERIC_ERROR_MESSAGE;
+    installFeedback.classList.add("error");
+    installFeedback.classList.remove("ok");
+    hideInstallProgressModal();
+    showCrashModal("Revertir instalacion", (data && data.error) || "No se pudo revertir");
+    loadInstallationDetails();
+    loadOverview();
+    return;
+  }
+  const message = "Instalacion revertida.";
   installFeedback.textContent = message;
   installFeedback.classList.toggle("ok", ok);
   installFeedback.classList.toggle("error", !ok);
