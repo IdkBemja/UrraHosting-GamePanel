@@ -172,6 +172,55 @@ class InstanceStorage:
             raise PathTraversalError(f"Ruta fuera de '{category}': {relative_path}")
         return candidate
 
+    def shadowed_categories(self, category: str, relative_path: str = "") -> list[str]:
+        """Category names that would collide, by name only, with a plain
+        subdirectory at this exact listing - e.g. browsing "game" at its
+        root and finding an entry named "mods" that is NOT the real "mods"
+        category.
+
+        mods/plugins/resourcepacks are separate bind mounts OVERLAID onto
+        these exact subpaths of game/ for game-runtime (compose.yml:
+        `${DATA_DIR}/mods:/data/game/mods`) - but the dashboard has no such
+        overlay, only its own separate top-level mounts for those same
+        categories. Browsing "game" at its root would otherwise show
+        whatever plain, uncovered directory happens to physically exist on
+        disk at e.g. game/mods (often root-owned cruft nobody ever
+        explicitly created or manages, or a stale leftover) - a DIFFERENT,
+        disconnected directory from the real "mods" category the running
+        server actually reads from. Uploading there looks like it worked (or
+        fails with a confusing permission error) either way, and the server
+        never sees those files. list_dir() hides these entries outright;
+        the Files tab uses this method's result to offer a "ir a la
+        categoria real" shortcut instead of just leaving the admin to
+        wonder where mods/plugins actually went.
+
+        Comparing actual root PATHS (not just names) is what keeps this
+        correct for worlds/modconfigs/players (Terraria/tModLoader): those
+        categories genuinely resolve to game/worlds etc - the SAME
+        directory, just reachable two ways - so they're never shadowed,
+        unlike mods/plugins/resourcepacks which resolve somewhere else
+        entirely. Only meaningful at a category's own root - a legitimately
+        nested "mods" folder two levels down is unrelated to this.
+
+        Only "game" is checked at all: it is the only category any OTHER
+        category's mount gets overlaid onto a subpath of, in this
+        deployment's compose.yml - comparing every category against every
+        other would flag unrelated top-level directories (e.g. "backups" vs
+        "mods") as colliding just because their roots differ, which they
+        trivially always do. Also only returns names that actually have a
+        same-named directory sitting there right now - a fresh instance
+        with nothing under game/ yet has nothing to jump away from, and
+        listing every structurally-possible collision regardless of whether
+        anything is actually there would clutter the shortcut row with
+        categories that were never a trap to begin with."""
+        if category != "game":
+            return []
+        root = self._root(category)
+        if self.resolve(category, relative_path) != root:
+            return []
+        candidates = (name for name, other_root in self._roots.items() if name != category and other_root != root / name)
+        return sorted(name for name in candidates if (root / name).is_dir())
+
     def list_dir(self, category: str, relative_path: str = "") -> list[FileEntry]:
         target = self.resolve(category, relative_path)
         root = self._root(category)
@@ -180,29 +229,7 @@ class InstanceStorage:
         if not target.is_dir():
             raise StorageError(f"'{relative_path}' no es un directorio")
 
-        # mods/plugins/resourcepacks are separate bind mounts OVERLAID onto
-        # these exact subpaths of game/ for game-runtime (compose.yml:
-        # `${DATA_DIR}/mods:/data/game/mods`) - but the dashboard has no such
-        # overlay, only its own separate top-level mounts for those same
-        # categories. Browsing "game" at its root would otherwise show
-        # whatever plain, uncovered directory happens to physically exist on
-        # disk at e.g. game/mods (often root-owned cruft nobody ever
-        # explicitly created or manages, or a stale leftover) - a DIFFERENT,
-        # disconnected directory from the real "mods" category the running
-        # server actually reads from. Uploading there looks like it worked
-        # (or fails with a confusing permission error) either way, and the
-        # server never sees those files.
-        #
-        # Comparing actual root PATHS (not just names) is what keeps this
-        # correct for worlds/modconfigs/players (Terraria/tModLoader): those
-        # categories genuinely resolve to game/worlds etc - the SAME
-        # directory, just reachable two ways - and must stay visible, unlike
-        # mods/plugins/resourcepacks which resolve somewhere else entirely.
-        hidden_names = frozenset()
-        if target == root and category == "game":
-            hidden_names = frozenset(
-                name for name, other_root in self._roots.items() if name != category and other_root != root / name
-            )
+        hidden_names = frozenset(self.shadowed_categories(category, relative_path))
 
         entries: list[FileEntry] = []
         for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):

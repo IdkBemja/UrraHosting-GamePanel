@@ -649,6 +649,47 @@ select:focus-visible,
   font-size: 0.85rem;
 }
 
+.file-shortcuts {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.file-shortcuts.is-hidden {
+  display: none;
+}
+
+.file-shortcuts-label {
+  color: #1e3a8a;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.file-shortcut-pill {
+  border: 1px solid rgba(37, 99, 235, 0.5);
+  background: #ffffff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  text-transform: capitalize;
+}
+
+.file-shortcut-pill:hover {
+  background: rgba(37, 99, 235, 0.1);
+}
+
 .drop-zone {
   border: 2px dashed rgba(226, 88, 34, 0.4);
   border-radius: 12px;

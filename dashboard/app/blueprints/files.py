@@ -24,6 +24,7 @@ def list_files(category: str):
     relative_path = request.args.get("path", "")
     try:
         entries = storage.list_dir(category, relative_path)
+        shortcuts = storage.shadowed_categories(category, relative_path)
     except PathTraversalError as exc:
         return jsonify({"error": str(exc)}), 400
     except StorageError as exc:
@@ -36,6 +37,12 @@ def list_files(category: str):
             "entries": [asdict(entry) for entry in entries],
             "usage_bytes": storage.usage_bytes(),
             "quota_bytes": storage.quota_bytes,
+            # Category names hidden from `entries` above because they'd
+            # otherwise collide, by name only, with a disconnected/orphaned
+            # subdirectory at this exact listing (see
+            # InstanceStorage.shadowed_categories()) - the Files tab renders
+            # these as "ir a la categoria real" shortcuts.
+            "shortcuts": shortcuts,
         }
     )
 

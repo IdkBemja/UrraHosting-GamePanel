@@ -392,6 +392,7 @@ const uploadProgressWrap = document.getElementById("uploadProgressWrap");
 const uploadProgress = document.getElementById("uploadProgress");
 const uploadProgressLabel = document.getElementById("uploadProgressLabel");
 const filesFeedback = document.getElementById("filesFeedback");
+const fileShortcuts = document.getElementById("fileShortcuts");
 
 let currentFilePath = "";
 let fileCategoriesLoaded = false;
@@ -410,6 +411,37 @@ async function ensureFileCategories() {
   fileCategoriesLoaded = true;
 }
 
+// `data.shortcuts` (see files.py/storage.py's shadowed_categories()) lists
+// category names hidden from this exact listing because they'd otherwise
+// collide, by name only, with a disconnected directory here (e.g. "mods"
+// while browsing game/ - a DIFFERENT folder from the real "mods" category,
+// see storage.py's docstring for why). Rather than just leaving admins to
+// wonder where mods/plugins actually live, offer a one-click jump straight
+// to the real category.
+function renderFileShortcuts(shortcuts) {
+  fileShortcuts.innerHTML = "";
+  fileShortcuts.classList.toggle("is-hidden", shortcuts.length === 0);
+  if (!shortcuts.length) return;
+
+  const label = document.createElement("span");
+  label.className = "file-shortcuts-label";
+  label.textContent = shortcuts.length > 1 ? "Ir directamente a:" : "Ir directamente a la categoria:";
+  fileShortcuts.appendChild(label);
+
+  for (const name of shortcuts) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-shortcut-pill";
+    button.innerHTML = `<i class="bi bi-box-arrow-up-right"></i> ${name}`;
+    button.addEventListener("click", () => {
+      fileCategory.value = name;
+      currentFilePath = "";
+      loadFiles();
+    });
+    fileShortcuts.appendChild(button);
+  }
+}
+
 async function loadFiles() {
   await ensureFileCategories();
   const category = fileCategory.value;
@@ -421,6 +453,8 @@ async function loadFiles() {
   filePathBreadcrumb.textContent = `/${category}/${currentFilePath}`;
   fileQuota.textContent =
     data.quota_bytes != null ? `${formatBytes(data.usage_bytes)} / ${formatBytes(data.quota_bytes)}` : "";
+
+  renderFileShortcuts(data.shortcuts || []);
 
   fileTableBody.innerHTML = "";
   filesEmptyState.classList.toggle("is-hidden", data.entries.length > 0);
