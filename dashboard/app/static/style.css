@@ -834,6 +834,11 @@ select:focus-visible,
   display: none;
 }
 
+#noGameCard.is-hidden,
+#catalogLicenseWrap.is-hidden {
+  display: none;
+}
+
 .catalog-version-filter {
   border: 1px solid rgba(226, 88, 34, 0.35);
   border-radius: 8px;
