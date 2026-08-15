@@ -74,6 +74,25 @@ def test_license_not_accepted_rejected():
     assert any("LICENSE_ACCEPTED" in e for e in result.errors)
 
 
+def test_bootstrap_instance_with_no_game_chosen_is_valid():
+    """A freshly created instance can leave GAME_FAMILY (and everything that
+    depends on it) empty - the game gets installed later from the Software
+    tab. See runtime/adapters/null_adapter.py for the adapter side."""
+    config, result = load_from_environ(
+        base_env(GAME_FAMILY="", GAME_EDITION="", GAME_SOFTWARE="", GAME_VERSION="", LICENSE_ACCEPTED="false")
+    )
+    assert result.ok
+    assert config is not None
+    assert config.is_configured is False
+    assert config.adapter_id == "/"
+
+
+def test_configured_instance_reports_is_configured():
+    config, result = load_from_environ(base_env())
+    assert result.ok
+    assert config.is_configured is True
+
+
 def test_memory_reservation_gt_limit_rejected():
     result = validate(base_env(GAME_MEMORY_LIMIT="1G", GAME_MEMORY_RESERVATION="2G"))
     assert not result.ok

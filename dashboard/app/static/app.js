@@ -52,6 +52,8 @@ for (const btn of tabButtons) {
   btn.addEventListener("click", () => activateTab(btn.dataset.tab));
 }
 
+document.getElementById("goToSoftwareTab")?.addEventListener("click", () => activateTab("software", { focus: true }));
+
 document.querySelector(".tab-bar")?.addEventListener("keydown", (event) => {
   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
   const currentIndex = tabButtons.findIndex((b) => b.getAttribute("aria-selected") === "true");
@@ -193,10 +195,11 @@ async function loadOverview() {
   const { ok, data } = await apiFetch("/api/overview");
   if (!ok || !data) return;
 
-  setText("ovGameFamily", data.game_family);
+  document.getElementById("noGameCard")?.classList.toggle("is-hidden", Boolean(data.game_family));
+  setText("ovGameFamily", data.game_family || "Sin instalar");
   setText("ovGameEdition", data.game_edition || "-");
-  setText("ovServerSoftware", data.game_software);
-  setText("ovGameVersion", data.game_version);
+  setText("ovServerSoftware", data.game_software || "-");
+  setText("ovGameVersion", data.game_version || "-");
   if (data.connection) {
     const endpoint = data.connection.kind === "domain" ? `${data.connection.address}:${data.connection.port}` : data.connection.address;
     setText("ovConnectAddress", endpoint);
@@ -760,7 +763,14 @@ const catalogVersionHint = document.getElementById("catalogVersionHint");
 let allCatalogVersions = [];
 const catalogRestart = document.getElementById("catalogRestart");
 const catalogBackup = document.getElementById("catalogBackup");
+const catalogLicense = document.getElementById("catalogLicense");
+const catalogLicenseWrap = document.getElementById("catalogLicenseWrap");
 const installButton = document.getElementById("installButton");
+// Set once per page load from /api/config in loadCatalogTree() - an
+// instance that already accepted a license (any prior install) never needs
+// to ask again; a brand-new bootstrap instance (see
+// config/game_config.py's is_configured) does, on its very first install.
+let licenseAlreadyAccepted = false;
 const rollbackButton = document.getElementById("rollbackButton");
 const installFeedback = document.getElementById("installFeedback");
 const gameCards = document.getElementById("gameCards");
@@ -892,17 +902,19 @@ function selectSoftware(software, options) {
 }
 
 async function loadCatalogTree() {
-  // /api/config is identity-only (no docker status, no storage usage scan)
-  // - /api/overview recomputes disk usage by walking every file under
-  // game/ on every call, which can take a long time for software that
-  // ships thousands of small files (Bedrock, tModLoader). The Software tab
-  // only ever needs to know which game/edition/software is current.
-  const [{ data: gamesData }, { data: configData }] = await Promise.all([apiFetch("/api/catalog/games"), apiFetch("/api/config")]);
+  const [{ data: gamesData }, { data: configData }] = await Promise.all([apiFetch("/api/catalog/games"), apiFetch("/api/overview")]);
   catalogTree = (gamesData && gamesData.games) || [];
   if (configData) {
     currentGameFamily = configData.game_family;
     currentGameEdition = configData.game_edition || "";
-    setText("swCurrent", `${configData.game_family}${configData.game_edition ? "/" + configData.game_edition : ""} - ${configData.game_software}`);
+    licenseAlreadyAccepted = Boolean(configData.license_accepted);
+    setText(
+      "swCurrent",
+      configData.game_family
+        ? `${configData.game_family}${configData.game_edition ? "/" + configData.game_edition : ""} - ${configData.game_software}`
+        : "Ningun juego instalado todavia - elige uno abajo e instala."
+    );
+    if (catalogLicenseWrap) catalogLicenseWrap.classList.toggle("is-hidden", licenseAlreadyAccepted);
   }
   selectGame(currentGameFamily || (catalogTree[0] && catalogTree[0].family));
 }
@@ -1113,6 +1125,12 @@ catalogSearch?.addEventListener("click", loadCatalogVersions);
 installButton?.addEventListener("click", async () => {
   const version = catalogVersion.value;
   if (!version || !selectedGame || !selectedSoftware) return;
+  if (!licenseAlreadyAccepted && !catalogLicense.checked) {
+    installFeedback.textContent = "Debes aceptar la licencia del software antes de instalar.";
+    installFeedback.classList.add("error");
+    installFeedback.classList.remove("ok");
+    return;
+  }
   const channel = catalogChannel.value;
   const isReprovision = selectedGame !== currentGameFamily || (selectedEdition || "") !== (currentGameEdition || "");
 
@@ -1146,6 +1164,7 @@ installButton?.addEventListener("click", async () => {
       channel,
       restart: catalogRestart.checked,
       backup: catalogBackup.checked,
+      license_accepted: catalogLicense.checked,
     }),
   });
 
@@ -1160,6 +1179,8 @@ installButton?.addEventListener("click", async () => {
     hideInstallProgressModal({ ok: true, message });
     currentGameFamily = selectedGame;
     currentGameEdition = selectedEdition;
+    licenseAlreadyAccepted = true;
+    if (catalogLicenseWrap) catalogLicenseWrap.classList.add("is-hidden");
   } else {
     installFeedback.textContent = GENERIC_ERROR_MESSAGE;
     installFeedback.classList.add("error");

@@ -31,7 +31,11 @@ from pathlib import Path
 DEFAULT_OVERRIDE_PATH = Path("/data/install/instance_override.json")
 
 # Reprovision identity - changing any of these is what the Software tab does.
-IDENTITY_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME_VERSION", "CHANNEL"})
+# LICENSE_ACCEPTED rides along with these five: an instance created without a
+# game chosen yet (see config/game_config.py's bootstrap state) never had a
+# license to accept in its original .env, so the Software tab's install flow
+# is what collects and persists that acceptance here, per install.
+IDENTITY_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME_VERSION", "CHANNEL", "LICENSE_ACCEPTED"})
 # Curated, safe-to-self-serve gameplay settings (dashboard/app/blueprints/
 # settings.py's "Configuracion" tab) - deliberately NOT the whole of
 # server.properties/serverconfig.txt: no ports, paths, world/level name or

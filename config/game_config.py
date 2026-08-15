@@ -130,6 +130,15 @@ class GameConfig:
     def supports_rcon(self) -> bool:
         return self.game_family == "minecraft"
 
+    @property
+    def is_configured(self) -> bool:
+        """False for a freshly created instance that has never had a game
+        installed yet (bootstrap state - GAME_FAMILY empty). The Software
+        tab's install flow is what first sets this to True, by writing
+        GAME_FAMILY/EDITION/SOFTWARE/VERSION into the instance override
+        (config/instance_state.py)."""
+        return bool(self.game_family)
+
 
 def _get(env: Mapping[str, str], key: str, default: str | None = None) -> str:
     value = env.get(key)
@@ -207,8 +216,12 @@ def validate(env: Mapping[str, str]) -> ValidationResult:
     elif "\x00" in data_dir:
         result.error("DATA_DIR: contiene caracteres invalidos")
 
+    # Empty GAME_FAMILY is the deliberate "bootstrap" state (see
+    # GameConfig.is_configured): an instance created without a game chosen
+    # yet, to be installed later from the dashboard's Software tab. Anything
+    # non-empty must still be one of the known families.
     game_family = _get(env, "GAME_FAMILY").lower()
-    if game_family not in _FAMILY_EDITIONS:
+    if game_family and game_family not in _FAMILY_EDITIONS:
         result.error(f"GAME_FAMILY: '{game_family}' invalido, debe ser uno de {sorted(_FAMILY_EDITIONS)}")
         game_family = ""
 
@@ -226,15 +239,22 @@ def validate(env: Mapping[str, str]) -> ValidationResult:
             )
 
     game_version = _get(env, "GAME_VERSION")
-    if not _VERSION_TOKEN_RE.match(game_version):
+    if game_family and not _VERSION_TOKEN_RE.match(game_version):
         result.error(f"GAME_VERSION: '{game_version}' no tiene un formato de version valido")
 
     channel = _get(env, "CHANNEL", "stable").lower()
     if channel not in _CHANNELS:
         result.error(f"CHANNEL: '{channel}' invalido, debe ser uno de {sorted(_CHANNELS)}")
 
+    # LICENSE_ACCEPTED/GAME_VERSION solo se exigen una vez que la instancia
+    # tiene un GAME_FAMILY elegido: una instancia recien creada puede llegar
+    # sin ningun juego seleccionado todavia (bootstrap - ver
+    # runtime.adapters.NullAdapter) y se instala despues desde la pestana
+    # Software del propio panel, momento en el que catalog.py::install()
+    # exige y persiste la aceptacion de licencia especifica del software
+    # elegido.
     license_accepted = _parse_bool(_get(env, "LICENSE_ACCEPTED", "false"), result, "LICENSE_ACCEPTED", default=False)
-    if not license_accepted:
+    if game_family and not license_accepted:
         result.error("LICENSE_ACCEPTED: debes aceptar explicitamente la licencia del software oficial antes de iniciar el servidor")
 
     world_name = _get(env, "WORLD_NAME", "world")

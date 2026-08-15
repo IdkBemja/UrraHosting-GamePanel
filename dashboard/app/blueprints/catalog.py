@@ -68,6 +68,12 @@ def install():
     channel = payload.get("channel", "stable")
     restart_after = bool(payload.get("restart", True))
     create_backup = bool(payload.get("backup", True))
+    # Instances created without a game chosen yet (bootstrap state - see
+    # config/game_config.py's is_configured) never had LICENSE_ACCEPTED set
+    # in their original .env, so this request is what collects it for the
+    # FIRST install; config.license_accepted (already true) covers a
+    # same-family software/version upgrade where it was accepted previously.
+    license_accepted = bool(payload.get("license_accepted", False))
 
     if not software or not version:
         return jsonify({"error": "software y version son obligatorios"}), 400
@@ -78,8 +84,8 @@ def install():
     installer = current_app.config["INSTALLER"]
     progress = installer.progress
 
-    if not config.license_accepted:
-        return jsonify({"error": "Debes aceptar la licencia del software (LICENSE_ACCEPTED) antes de instalar"}), 400
+    if not (config.license_accepted or license_accepted):
+        return jsonify({"error": "Debes aceptar la licencia del software antes de instalar"}), 400
 
     is_reprovision = (game_family, game_edition) != (config.game_family, config.game_edition)
     docker_client = current_app.config["DOCKER_CLIENT"]
@@ -157,6 +163,7 @@ def install():
             "GAME_SOFTWARE": software,
             "GAME_VERSION": version,
             "CHANNEL": channel,
+            "LICENSE_ACCEPTED": "true" if (config.license_accepted or license_accepted) else "false",
         },
         path=override_path,
     )

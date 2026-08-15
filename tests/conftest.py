@@ -61,6 +61,29 @@ def base_env(**overrides) -> dict:
 
 
 @pytest.fixture
+def bootstrap_dashboard_client(tmp_path, monkeypatch):
+    """Same as dashboard_client, but for an instance created without a game
+    chosen yet (GAME_FAMILY/EDITION/SOFTWARE/VERSION empty, LICENSE_ACCEPTED
+    false) - the state a container created straight from
+    UrraHosting-Dashboard's platform_stack seed is now in, since it no
+    longer collects those fields at creation time (see
+    scripts/seed_platform_stack_templates.py::seed_gamepanel() in that
+    repo)."""
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "_DATA_ROOT", tmp_path)
+    env = base_env(GAME_FAMILY="", GAME_EDITION="", GAME_SOFTWARE="", GAME_VERSION="", LICENSE_ACCEPTED="false")
+    env["DOCKER_HOST"] = "tcp://127.0.0.1:1"
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    flask_app = main_module.create_app()
+    flask_app.config["TESTING"] = True
+    with flask_app.test_client() as test_client:
+        yield test_client
+
+
+@pytest.fixture
 def dashboard_client(tmp_path, monkeypatch):
     """A Flask test client for a full `create_app()`, pointed at a temp
     DATA_ROOT and a fake (unreachable) DOCKER_HOST - InstanceDockerClient/

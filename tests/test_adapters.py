@@ -22,6 +22,18 @@ def test_get_adapter_unknown_combo_raises():
         get_adapter("minecraft", "pocket", "vanilla")
 
 
+def test_get_adapter_empty_family_returns_null_adapter():
+    from runtime.adapters.null_adapter import NullAdapter
+
+    adapter = get_adapter("", "", "")
+    assert isinstance(adapter, NullAdapter)
+    config = _config(GAME_FAMILY="", GAME_EDITION="", GAME_SOFTWARE="", GAME_VERSION="", LICENSE_ACCEPTED="false")
+    assert adapter.file_categories(config) == []
+    assert adapter.validate_extra({}) == []
+    with pytest.raises(AdapterConfigError):
+        adapter.launch_command(config, {}, Path("/data/game"))
+
+
 # -- Minecraft Java -----------------------------------------------------
 
 

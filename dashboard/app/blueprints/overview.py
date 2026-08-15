@@ -43,6 +43,7 @@ def overview():
             "game_software": config.game_software,
             "game_version": config.game_version,
             "channel": config.channel,
+            "license_accepted": config.license_accepted,
             "protocol": g.adapter.protocol,
             "running": state["running"],
             "container_status": state["status"],

@@ -11,6 +11,7 @@ from __future__ import annotations
 from .base import GameRuntimeAdapter
 from .minecraft_bedrock import MinecraftBedrockAdapter
 from .minecraft_java import MinecraftJavaAdapter
+from .null_adapter import NullAdapter
 from .terraria import TerrariaAdapter
 from .tmodloader import TModLoaderAdapter
 
@@ -23,6 +24,12 @@ def get_adapter(game_family: str, game_edition: str, game_software: str) -> Game
     game_family = (game_family or "").lower()
     game_edition = (game_edition or "").lower()
     game_software = (game_software or "").lower()
+
+    # Bootstrap state (config.game_config.GameConfig.is_configured == False):
+    # a freshly created instance with no game chosen yet is a valid, expected
+    # state, not an error - see runtime/adapters/null_adapter.py.
+    if not game_family:
+        return NullAdapter()
 
     if game_family == "minecraft" and game_edition == "java":
         return MinecraftJavaAdapter()
@@ -38,4 +45,4 @@ def get_adapter(game_family: str, game_edition: str, game_software: str) -> Game
     )
 
 
-__all__ = ["GameRuntimeAdapter", "UnknownAdapterError", "get_adapter"]
+__all__ = ["GameRuntimeAdapter", "NullAdapter", "UnknownAdapterError", "get_adapter"]

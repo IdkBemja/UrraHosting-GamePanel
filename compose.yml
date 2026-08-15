@@ -14,20 +14,25 @@ name: game-${INSTANCE_ID}
 x-instance-env: &instance-env
   INSTANCE_ID: ${INSTANCE_ID}
   DATA_DIR: ${DATA_DIR}
-  GAME_FAMILY: ${GAME_FAMILY}
+  # Empty/false defaults here are a deliberate, valid "bootstrap" state: an
+  # instance can be created with no game chosen yet and installed later from
+  # the dashboard's Software tab (config/game_config.py's validate() only
+  # requires GAME_VERSION/LICENSE_ACCEPTED once GAME_FAMILY is non-empty;
+  # runtime/adapters/get_adapter() returns NullAdapter for the empty case).
+  GAME_FAMILY: ${GAME_FAMILY:-}
   GAME_EDITION: ${GAME_EDITION:-}
-  GAME_SOFTWARE: ${GAME_SOFTWARE}
-  GAME_VERSION: ${GAME_VERSION}
+  GAME_SOFTWARE: ${GAME_SOFTWARE:-}
+  GAME_VERSION: ${GAME_VERSION:-}
   CHANNEL: ${CHANNEL:-stable}
-  LICENSE_ACCEPTED: ${LICENSE_ACCEPTED}
+  LICENSE_ACCEPTED: ${LICENSE_ACCEPTED:-false}
   GAME_PORT: ${GAME_PORT}
   DASHBOARD_PORT: ${DASHBOARD_PORT}
   PUBLIC_BASE_DOMAIN: ${PUBLIC_BASE_DOMAIN:-}
   PUBLIC_SERVER_ADDRESS: ${PUBLIC_SERVER_ADDRESS:-}
   TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-0}
-  WORLD_NAME: ${WORLD_NAME}
-  MAX_PLAYERS: ${MAX_PLAYERS}
-  MOTD: ${MOTD}
+  WORLD_NAME: ${WORLD_NAME:-world}
+  MAX_PLAYERS: ${MAX_PLAYERS:-20}
+  MOTD: ${MOTD:-Servidor de juego}
   DIFFICULTY: ${DIFFICULTY:-easy}
   GAMEMODE: ${GAMEMODE:-survival}
   ONLINE_MODE: ${ONLINE_MODE:-true}

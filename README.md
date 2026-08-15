@@ -22,14 +22,21 @@ behavior was changed; they remain regression baselines.
 | Terraria | Dedicated Server | Vanilla oficial para Linux |
 | Terraria | Dedicated Server modded | tModLoader estable o preview |
 
-`GAME_FAMILY`/`GAME_EDITION` are fixed for the lifetime of an instance (they
-determine the published port/protocol and which compose overlay you used);
-`GAME_SOFTWARE`/version are switchable from the dashboard's Software tab
-within that family/edition (e.g. Paper → Purpur, or Terraria vanilla →
-tModLoader is not switchable without redeploying, since they are different
-`GAME_SOFTWARE` values under the same `terraria` family — installing a
-different `GAME_SOFTWARE` value than the one in `.env` is intentionally
-rejected by `config/game_config.py`).
+`GAME_FAMILY`/`GAME_EDITION`/`GAME_SOFTWARE`/`GAME_VERSION` can all be left
+empty in `.env` at creation time — an instance boots fine with no game
+chosen yet (`config/game_config.py`'s "bootstrap" state,
+`runtime/adapters/null_adapter.py` on the runtime side) and stays up,
+waiting: pick and install a game later from the dashboard's Software tab,
+which is also where you accept that software's license
+(`LICENSE_ACCEPTED`, see below) instead of setting it upfront. Reprovisioning
+to a different family/edition later (e.g. Java → Bedrock) works at the
+compose level (both TCP and UDP are always published on `GAME_PORT`, see
+`compose.yml`), but if something in front of this template only forwards one
+protocol to that port at creation time (e.g. a single-protocol Traefik
+entrypoint provisioned by an external orchestrator such as
+UrraHosting-Dashboard), only families using that protocol will actually be
+reachable post-install without redoing that external provisioning step —
+Java/Terraria/tModLoader are TCP, Bedrock is UDP.
 
 ## Quickstart
 
@@ -58,9 +65,12 @@ volume is derived from `INSTANCE_ID`, so instances never collide or share
 state.
 
 Accept the license of whatever you're about to install (Mojang's EULA for
-Minecraft, Re-Logic/tModLoader's terms for Terraria) by setting
-`LICENSE_ACCEPTED=true` — the server refuses to start otherwise, and every
-install is recorded in the activity log.
+Minecraft, Re-Logic/tModLoader's terms for Terraria). If you already know
+which game this instance will run, set `LICENSE_ACCEPTED=true` in `.env`
+upfront — the server refuses to start otherwise. If you left the game
+selection for later (see above), accept it as part of the Software tab's
+install form instead; either way, every install is recorded in the activity
+log.
 
 ## Architecture
 
