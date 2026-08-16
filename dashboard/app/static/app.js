@@ -1374,11 +1374,27 @@ async function loadBackups() {
     row.appendChild(actorCell);
 
     const skippedCell = document.createElement("td");
-    const skippedCount = (backup.skipped_files || []).length;
-    if (skippedCount > 0) {
-      skippedCell.textContent = `${skippedCount} archivo(s)`;
-      skippedCell.title = backup.skipped_files.join("\n");
-      skippedCell.classList.add("skipped-files-cell");
+    const skippedFiles = backup.skipped_files || [];
+    if (skippedFiles.length > 0) {
+      const trigger = document.createElement("span");
+      trigger.className = "skipped-files-cell";
+      trigger.tabIndex = 0;
+      trigger.textContent = `${skippedFiles.length} archivo(s)`;
+
+      const tooltip = document.createElement("div");
+      tooltip.className = "skipped-files-tooltip";
+      tooltip.setAttribute("role", "tooltip");
+      const tooltipTitle = document.createElement("strong");
+      tooltipTitle.textContent = "Omitidos por falta de permisos de lectura:";
+      tooltip.appendChild(tooltipTitle);
+      for (const path of skippedFiles) {
+        const line = document.createElement("div");
+        line.textContent = path;
+        tooltip.appendChild(line);
+      }
+      trigger.appendChild(tooltip);
+
+      skippedCell.appendChild(trigger);
     } else {
       skippedCell.textContent = "-";
     }

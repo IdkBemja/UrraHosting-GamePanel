@@ -754,9 +754,66 @@ select:focus-visible,
 }
 
 .skipped-files-cell {
+  position: relative;
+  display: inline-block;
   color: #b45309;
   text-decoration: underline dotted;
   cursor: help;
+}
+
+.skipped-files-cell:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.skipped-files-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 0.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  max-width: 360px;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #1f2937;
+  color: #f3f4f6;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  word-break: break-all;
+  cursor: default;
+}
+
+.skipped-files-tooltip strong {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: #fca5a5;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.skipped-files-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #1f2937;
+}
+
+.skipped-files-cell:hover .skipped-files-tooltip,
+.skipped-files-cell:focus .skipped-files-tooltip,
+.skipped-files-cell:focus-within .skipped-files-tooltip {
+  display: block;
 }
 
 .empty-state.is-hidden {
