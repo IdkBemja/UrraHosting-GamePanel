@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -165,6 +166,8 @@ def create_app() -> Flask:
     app.config["INSTALL_DIR"] = install_dir
     app.config["BACKUPS_DIR"] = backups_dir
     app.config["BACKUPS"] = BackupService(game_dir=_DATA_ROOT / "game", backups_dir=backups_dir)
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        _start_backup_scheduler(app)
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
@@ -185,6 +188,34 @@ def create_app() -> Flask:
         return {"current_year": time.strftime("%Y", time.gmtime())}
 
     return app
+
+
+def _start_backup_scheduler(app: Flask) -> None:
+    """Background daemon thread that checks every 5 minutes whether an
+    automatic backup is due (see BackupService.maybe_run_scheduled() /
+    the Backups tab's settings). Safe with gunicorn's single-worker setup
+    (see this file's CMD comment in the Dockerfile) - one worker, one
+    thread, no duplicate schedules. Skipped entirely under pytest (many
+    tests build a fresh app via create_app()) so test runs don't accumulate
+    live background threads."""
+    service = app.config["BACKUPS"]
+    activity = app.config["ACTIVITY"]
+
+    def _on_done(info, error):
+        if info is not None:
+            activity.record("backup_created", {"id": info.id, "auto": True, "skipped": len(info.skipped_files)})
+        elif error:
+            activity.record("backup_failed", {"error": error, "auto": True})
+
+    def _loop():
+        while True:
+            time.sleep(300)
+            try:
+                service.maybe_run_scheduled(actor="auto", on_done=_on_done)
+            except Exception:  # noqa: BLE001 - background loop must never die
+                app.logger.exception("Fallo el verificador de backups automaticos")
+
+    threading.Thread(target=_loop, name="backup-scheduler", daemon=True).start()
 
 
 def _install_error_handlers(app: Flask) -> None:

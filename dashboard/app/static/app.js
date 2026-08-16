@@ -1373,6 +1373,17 @@ async function loadBackups() {
     actorCell.textContent = backup.actor;
     row.appendChild(actorCell);
 
+    const skippedCell = document.createElement("td");
+    const skippedCount = (backup.skipped_files || []).length;
+    if (skippedCount > 0) {
+      skippedCell.textContent = `${skippedCount} archivo(s)`;
+      skippedCell.title = backup.skipped_files.join("\n");
+      skippedCell.classList.add("skipped-files-cell");
+    } else {
+      skippedCell.textContent = "-";
+    }
+    row.appendChild(skippedCell);
+
     const actionsCell = document.createElement("td");
     actionsCell.className = "row-actions";
     const downloadLink = document.createElement("a");
@@ -1387,6 +1398,13 @@ async function loadBackups() {
     restoreBtn.textContent = "Restaurar";
     restoreBtn.addEventListener("click", () => restoreBackup(backup.id));
     actionsCell.appendChild(restoreBtn);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "btn ghost";
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Eliminar";
+    deleteBtn.addEventListener("click", () => deleteBackup(backup.id, backup.created_at));
+    actionsCell.appendChild(deleteBtn);
 
     row.appendChild(actionsCell);
     backupsTableBody.appendChild(row);
@@ -1410,14 +1428,160 @@ async function restoreBackup(id) {
   loadOverview();
 }
 
-createBackupButton?.addEventListener("click", async () => {
-  backupFeedback.textContent = "Creando backup...";
-  backupFeedback.classList.remove("error", "ok");
-  const { ok, data } = await apiFetch("/api/backups/create", { method: "POST" });
-  backupFeedback.textContent = ok ? "Backup creado correctamente." : (data && data.error) || "No se pudo crear el backup";
+async function deleteBackup(id, label) {
+  const confirmed = await askConfirm(
+    "Eliminar backup",
+    `Se eliminara de forma permanente el backup del ${label}. ¿Continuar?`,
+    "Esta accion no se puede deshacer."
+  );
+  if (!confirmed) return;
+  const { ok, data } = await apiFetch(`/api/backups/${id}`, { method: "DELETE" });
+  backupFeedback.textContent = ok ? "Backup eliminado." : (data && data.error) || "No se pudo eliminar el backup";
   backupFeedback.classList.toggle("ok", ok);
   backupFeedback.classList.toggle("error", !ok);
   loadBackups();
+}
+
+/* ---- Backup creation progress modal ---- */
+
+const backupProgressModal = document.getElementById("backupProgressModal");
+const backupProgressTitle = document.getElementById("backupProgressTitle");
+const backupProgressBar = document.getElementById("backupProgressBar");
+const backupProgressPercent = document.getElementById("backupProgressPercent");
+const backupProgressMessage = document.getElementById("backupProgressMessage");
+const backupProgressSkipped = document.getElementById("backupProgressSkipped");
+const backupProgressClose = document.getElementById("backupProgressClose");
+
+const BACKUP_STATUS_LABELS = {
+  counting: "Calculando tamano del backup...",
+  running: "Copiando archivos...",
+  done: "Backup completado.",
+  error: "El backup fallo.",
+};
+
+let backupProgressTimer = null;
+
+function setBackupProgressBar(percent) {
+  if (typeof percent === "number" && percent > 0) {
+    backupProgressBar.classList.remove("is-indeterminate");
+    backupProgressBar.style.width = `${Math.min(100, percent)}%`;
+  } else {
+    backupProgressBar.classList.add("is-indeterminate");
+    backupProgressBar.style.width = "";
+  }
+}
+
+function stopBackupProgressPolling() {
+  if (backupProgressTimer) {
+    window.clearInterval(backupProgressTimer);
+    backupProgressTimer = null;
+  }
+}
+
+function showBackupProgressModal() {
+  backupProgressTitle.textContent = "Creando backup";
+  backupProgressPercent.textContent = "0%";
+  backupProgressMessage.textContent = "Preparando...";
+  backupProgressSkipped.classList.add("is-hidden");
+  backupProgressClose.classList.add("is-hidden");
+  setBackupProgressBar(null);
+  backupProgressModal.classList.remove("is-hidden");
+
+  const poll = async () => {
+    const { ok, data } = await apiFetch("/api/backups/progress");
+    if (!ok || !data) return;
+
+    if (data.status === "idle") return;
+
+    const label = BACKUP_STATUS_LABELS[data.status] || "Procesando...";
+    setBackupProgressBar(data.status === "counting" ? null : data.percent);
+    backupProgressPercent.textContent = data.status === "counting" ? "" : `${data.percent}%`;
+    backupProgressMessage.textContent = data.current_file ? `${label} ${data.current_file}` : label;
+
+    if (data.status === "done" || data.status === "error") {
+      stopBackupProgressPolling();
+      backupProgressTitle.textContent = data.status === "done" ? "Backup completado" : "El backup fallo";
+      if (data.status === "error") {
+        backupProgressMessage.textContent = data.error || "No se pudo crear el backup";
+      }
+      if (data.status === "done" && data.skipped && data.skipped.length > 0) {
+        backupProgressSkipped.textContent = `Se omitieron ${data.skipped.length} archivo(s) por falta de permisos de lectura. El resto del backup se creo correctamente.`;
+        backupProgressSkipped.classList.remove("is-hidden");
+      }
+      backupProgressClose.classList.remove("is-hidden");
+      backupFeedback.textContent =
+        data.status === "done" ? "Backup creado correctamente." : data.error || "No se pudo crear el backup";
+      backupFeedback.classList.toggle("ok", data.status === "done");
+      backupFeedback.classList.toggle("error", data.status !== "done");
+      loadBackups();
+    }
+  };
+  poll();
+  backupProgressTimer = window.setInterval(poll, 700);
+}
+
+backupProgressClose?.addEventListener("click", () => backupProgressModal.classList.add("is-hidden"));
+
+createBackupButton?.addEventListener("click", async () => {
+  backupFeedback.textContent = "";
+  backupFeedback.classList.remove("error", "ok");
+  const { ok, data } = await apiFetch("/api/backups/create", { method: "POST" });
+  if (!ok) {
+    backupFeedback.textContent = (data && data.error) || "No se pudo iniciar el backup";
+    backupFeedback.classList.add("error");
+    return;
+  }
+  showBackupProgressModal();
+});
+
+/* ---- Backup settings modal ---- */
+
+const backupSettingsButton = document.getElementById("backupSettingsButton");
+const backupSettingsModal = document.getElementById("backupSettingsModal");
+const backupSettingsForm = document.getElementById("backupSettingsForm");
+const backupSettingsFeedback = document.getElementById("backupSettingsFeedback");
+const backupSettingsCancel = document.getElementById("backupSettingsCancel");
+const backupRetentionInput = document.getElementById("backupRetention");
+const backupAutoEnabledInput = document.getElementById("backupAutoEnabled");
+const backupAutoIntervalInput = document.getElementById("backupAutoInterval");
+
+backupSettingsButton?.addEventListener("click", async () => {
+  backupSettingsFeedback.textContent = "";
+  backupSettingsFeedback.classList.remove("error", "ok");
+  const { ok, data } = await apiFetch("/api/backups/settings");
+  if (!ok || !data) {
+    backupSettingsFeedback.textContent = "No se pudo cargar la configuracion";
+    backupSettingsFeedback.classList.add("error");
+  } else {
+    backupRetentionInput.value = data.settings.retention;
+    backupAutoEnabledInput.checked = data.settings.auto_enabled;
+    backupAutoIntervalInput.value = data.settings.auto_interval_hours;
+  }
+  backupSettingsModal.classList.remove("is-hidden");
+});
+
+backupSettingsCancel?.addEventListener("click", () => backupSettingsModal.classList.add("is-hidden"));
+backupSettingsModal?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") backupSettingsModal.classList.add("is-hidden");
+});
+
+backupSettingsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  backupSettingsFeedback.textContent = "Guardando...";
+  backupSettingsFeedback.classList.remove("error", "ok");
+  const { ok, data } = await apiFetch("/api/backups/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      retention: Number(backupRetentionInput.value),
+      auto_enabled: backupAutoEnabledInput.checked,
+      auto_interval_hours: Number(backupAutoIntervalInput.value),
+    }),
+  });
+  backupSettingsFeedback.textContent = ok ? "Configuracion guardada." : (data && data.error) || "No se pudo guardar";
+  backupSettingsFeedback.classList.toggle("ok", ok);
+  backupSettingsFeedback.classList.toggle("error", !ok);
+  if (ok) window.setTimeout(() => backupSettingsModal.classList.add("is-hidden"), 700);
 });
 
 /* ---------------------------------------------------------------------- */

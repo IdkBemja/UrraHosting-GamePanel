@@ -58,6 +58,25 @@ class GameRuntimeAdapter(ABC):
     def rcon_port(self) -> int | None:
         return None
 
+    def backup_pause_commands(self) -> tuple[str, ...] | None:
+        """Commands sent through the control channel, in order, right
+        before a Backups-tab archive starts copying `game/` while the
+        server is running - lets a game that supports it flush + hold
+        autosave for the duration of the copy so the backup doesn't race a
+        write in progress (see dashboard/app/services/backup.py's docstring
+        for the production incident this avoids: a Minecraft world file
+        mid-autosave briefly denying reads). None means this control
+        channel has no such mechanism; the backup still proceeds, just
+        without pausing autosave first - services/backup.py's own per-file
+        retry is the fallback for that case."""
+        return None
+
+    def backup_resume_commands(self) -> tuple[str, ...] | None:
+        """Commands to undo backup_pause_commands() once the archive copy
+        finishes (success or failure) - always attempted if the pause
+        commands were, so autosave is never left disabled."""
+        return None
+
     def launch_env(self, config: GameConfig, env: Mapping[str, str], server_dir: Path) -> dict[str, str]:
         """Extra environment variables the subprocess needs (e.g.
         LD_LIBRARY_PATH for Bedrock's bundled shared libraries). Merged on

@@ -93,6 +93,17 @@ class MinecraftJavaAdapter(GameRuntimeAdapter):
     def stop_command(self) -> str | None:
         return "stop"
 
+    def backup_pause_commands(self) -> tuple[str, ...] | None:
+        # "save-all flush" forces an immediate, complete write (bypassing
+        # the "already saving" no-op vanilla/Paper otherwise apply) so the
+        # backup starts from a clean snapshot; "save-off" then stops the
+        # normal autosave tick from writing again - and racing the archive
+        # copy - until backup_resume_commands() below runs.
+        return ("save-all flush", "save-off")
+
+    def backup_resume_commands(self) -> tuple[str, ...] | None:
+        return ("save-on",)
+
     def prepare(self, config, env: Mapping[str, str], server_dir: Path) -> None:
         server_dir.mkdir(parents=True, exist_ok=True)
         (server_dir / "eula.txt").write_text(f"eula={'true' if config.license_accepted else 'false'}\n", encoding="utf-8")

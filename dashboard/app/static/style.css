@@ -753,6 +753,12 @@ select:focus-visible,
   font-style: italic;
 }
 
+.skipped-files-cell {
+  color: #b45309;
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
 .empty-state.is-hidden {
   display: none;
 }
@@ -956,6 +962,13 @@ select:focus-visible,
   animation: progress-indeterminate 1.2s ease-in-out infinite;
 }
 
+.backup-progress-percent {
+  margin: 0.5rem 0 0;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--urra-primary);
+}
+
 @keyframes progress-indeterminate {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(250%); }
@@ -1003,6 +1016,7 @@ select:focus-visible,
 .dashboard-grid { padding: .5rem 2rem 2rem; }
 .card-heading { display: flex; align-items: center; gap: .65rem;}
 .card-heading-2 { display: flex; align-items: center; gap: .65rem; justify-content: space-between; margin-bottom: .75rem; }
+.card-heading-2 .row-actions { display: flex; gap: .5rem; flex-shrink: 0; }
 .card-heading > i { color: var(--urra-primary); font-size: 1.25rem; }
 .card-heading p { margin: .2rem 0 0; }
 .card-heading-2 > div > i { color: var(--urra-primary); font-size: 1.25rem; }

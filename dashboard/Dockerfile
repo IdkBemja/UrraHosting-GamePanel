@@ -81,6 +81,19 @@ EXPOSE ${DASHBOARD_PORT}
 # are NOT chowned from here on purpose - game-runtime's entrypoint.sh (which
 # starts first, see compose.yml's depends_on) already does that, since those
 # also need to be writable by ITS uid, which this chown alone could not do.
+# The `chmod -R g+rX /data/game` below IS this container's business though:
+# it only ever needs to READ that tree (Files tab browsing, backups/create -
+# see services/backup.py), and a real production incident showed
+# entrypoint.sh's own `chmod g+rwX` there isn't always enough - files a game
+# process writes with a stricter mode than its own umask expects (or written
+# before that pass ever ran) can still come out group-unreadable, which
+# previously turned "create a backup" into an unhandled 500 the moment
+# tarfile hit exactly one such file. This runs as root (this container's
+# uid before the gosu drop below), so it can grant the read bit regardless
+# of who owns the file - best-effort and non-fatal for the exact same
+# bind-mount-backend reasons as the chown above, and skipped outright if
+# /data/game doesn't exist yet (e.g. this container racing game-runtime's
+# first boot).
 # --worker-class gthread made explicit rather than relied on implicitly:
 # gunicorn 23 auto-selects gthread whenever --threads > 1 is passed (verified
 # empirically against this exact gunicorn version - a plain sync worker,
@@ -91,4 +104,4 @@ EXPOSE ${DASHBOARD_PORT}
 # (installer.py's InstallProgress polling while an install blocks;
 # overview.py's periodic polls; the Console tab's log stream) to an
 # undocumented default that could differ across gunicorn versions.
-CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups /data/uploads && (chown -R dashboard:dashboard /data/panel /data/install /data/backups /data/uploads || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --worker-class gthread --threads 8 --timeout 1900 'app.main:create_app()'"]
+CMD ["sh", "-c", "umask 002 && mkdir -p /data/panel /data/install /data/backups /data/uploads && (chown -R dashboard:dashboard /data/panel /data/install /data/backups /data/uploads || echo 'warning: chown on /data/* failed (expected on some bind-mount backends); continuing') && ([ -d /data/game ] && (chmod -R g+rX /data/game || echo 'warning: chmod g+rX on /data/game failed (expected on some bind-mount backends); continuing') || true) && exec gosu dashboard gunicorn --bind 0.0.0.0:${DASHBOARD_PORT:-8080} --workers 1 --worker-class gthread --threads 8 --timeout 1900 'app.main:create_app()'"]
