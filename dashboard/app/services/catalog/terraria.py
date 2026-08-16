@@ -6,7 +6,13 @@ official Linux dedicated-server build, at
   https://terraria.org/api/download/pc-dedicated-server/terraria-server-<compact-version>.zip
 
 where <compact-version> is the version with dots removed (e.g. "1449" for
-1.4.4.9). terraria.org is a client-side-rendered React app: the download
+1.4.4.9). That zip bundles Linux/Mac/Windows builds together under a
+"<compact-version>/<Platform>/" root (e.g. "1449/Linux/TerrariaServer.bin.
+x86_64"), so `archive_root` tells the installer to only extract the Linux
+subtree and strip that prefix, leaving the binary flat at the game dir's
+root the way runtime/adapters/terraria.py expects it.
+
+terraria.org is a client-side-rendered React app: the download
 filename is no longer present in the homepage's raw HTML (what a plain GET
 sees), it's fetched by the page's own JS from a small JSON endpoint,
 
@@ -72,6 +78,7 @@ class TerrariaProvider:
             filename=f"terraria-server-{compact}.zip",
             install_kind="zip",
             expected_entrypoint="TerrariaServer.bin.x86_64",
+            archive_root=f"{compact}/Linux",
         )
 
 

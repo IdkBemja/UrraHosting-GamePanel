@@ -519,7 +519,14 @@ class Installer:
 
             try:
                 with open(tmp_path, "rb") as handle:
-                    extract_archive(download.filename, handle, staging, self._max_bytes * 4, _on_extract_progress)
+                    extract_archive(
+                        download.filename,
+                        handle,
+                        staging,
+                        self._max_bytes * 4,
+                        _on_extract_progress,
+                        root_prefix=download.archive_root,
+                    )
             except ArchiveError as exc:
                 raise InstallError(f"No se pudo extraer el archivo: {exc}") from exc
         finally:

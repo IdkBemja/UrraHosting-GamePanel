@@ -39,6 +39,11 @@ class DownloadInfo:
     # For "zip" installs: the file inside the extracted tree that must exist
     # for the install to be considered successful (e.g. "bedrock_server").
     expected_entrypoint: str | None = None
+    # For "zip" installs whose archive bundles multiple platforms/versions
+    # under one root (e.g. Terraria's "<version>/Linux/..."): only entries
+    # under this path are extracted, with the prefix stripped, so the game
+    # dir ends up flat. None means extract everything as-is.
+    archive_root: str | None = None
 
 
 class _TTLCache:

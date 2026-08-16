@@ -37,18 +37,43 @@ def _safe_target(dest_root: Path, member_name: str) -> Path:
     return target
 
 
-def extract_zip(stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_progress: ProgressCallback | None = None) -> None:
+def _normalize_root_prefix(root_prefix: str | None) -> str | None:
+    if not root_prefix:
+        return None
+    cleaned = root_prefix.replace("\\", "/").strip("/")
+    return f"{cleaned}/" if cleaned else None
+
+
+def extract_zip(
+    stream: BinaryIO,
+    dest_root: Path,
+    max_total_bytes: int,
+    on_progress: ProgressCallback | None = None,
+    root_prefix: str | None = None,
+) -> None:
     dest_root.mkdir(parents=True, exist_ok=True)
+    prefix = _normalize_root_prefix(root_prefix)
     with zipfile.ZipFile(stream) as archive:
         infos = archive.infolist()
         if len(infos) > _MAX_MEMBERS:
             raise ArchiveError("El archivo contiene demasiados elementos")
         total = 0
         for processed, info in enumerate(infos, start=1):
+            name = info.filename.replace("\\", "/")
+            if prefix is not None:
+                if not name.startswith(prefix):
+                    if on_progress is not None:
+                        on_progress(processed, len(infos))
+                    continue
+                name = name[len(prefix):]
+                if not name:
+                    if on_progress is not None:
+                        on_progress(processed, len(infos))
+                    continue
             total += info.file_size
             if total > max_total_bytes:
                 raise ArchiveError("El archivo descomprimido excede el tamano maximo permitido")
-            target = _safe_target(dest_root, info.filename)
+            target = _safe_target(dest_root, name)
             is_symlink = (info.external_attr >> 16) & 0o170000 == 0o120000
             if is_symlink:
                 raise ArchiveError(f"No se permiten symlinks en el archivo: {info.filename}")
@@ -66,8 +91,15 @@ def extract_zip(stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_prog
                 on_progress(processed, len(infos))
 
 
-def extract_tar(stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_progress: ProgressCallback | None = None) -> None:
+def extract_tar(
+    stream: BinaryIO,
+    dest_root: Path,
+    max_total_bytes: int,
+    on_progress: ProgressCallback | None = None,
+    root_prefix: str | None = None,
+) -> None:
     dest_root.mkdir(parents=True, exist_ok=True)
+    prefix = _normalize_root_prefix(root_prefix)
     with tarfile.open(fileobj=stream, mode="r:*") as archive:
         members = archive.getmembers()
         if len(members) > _MAX_MEMBERS:
@@ -78,11 +110,22 @@ def extract_tar(stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_prog
                 raise ArchiveError(f"No se permiten symlinks/hardlinks en el archivo: {member.name}")
             if member.isdev():
                 raise ArchiveError(f"No se permiten dispositivos en el archivo: {member.name}")
+            name = member.name.replace("\\", "/")
+            if prefix is not None:
+                if not name.startswith(prefix):
+                    if on_progress is not None:
+                        on_progress(processed, len(members))
+                    continue
+                name = name[len(prefix):]
+                if not name:
+                    if on_progress is not None:
+                        on_progress(processed, len(members))
+                    continue
             if member.isfile():
                 total += member.size
                 if total > max_total_bytes:
                     raise ArchiveError("El archivo descomprimido excede el tamano maximo permitido")
-            target = _safe_target(dest_root, member.name)
+            target = _safe_target(dest_root, name)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
             elif member.isfile():
@@ -100,12 +143,17 @@ def extract_tar(stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_prog
 
 
 def extract_archive(
-    filename: str, stream: BinaryIO, dest_root: Path, max_total_bytes: int, on_progress: ProgressCallback | None = None
+    filename: str,
+    stream: BinaryIO,
+    dest_root: Path,
+    max_total_bytes: int,
+    on_progress: ProgressCallback | None = None,
+    root_prefix: str | None = None,
 ) -> None:
     lower = filename.lower()
     if lower.endswith(".zip"):
-        extract_zip(stream, dest_root, max_total_bytes, on_progress)
+        extract_zip(stream, dest_root, max_total_bytes, on_progress, root_prefix)
     elif lower.endswith((".tar.gz", ".tgz", ".tar")):
-        extract_tar(stream, dest_root, max_total_bytes, on_progress)
+        extract_tar(stream, dest_root, max_total_bytes, on_progress, root_prefix)
     else:
         raise ArchiveError("Formato no soportado; usa .zip, .tar.gz o .tar")
