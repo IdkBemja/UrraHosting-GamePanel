@@ -89,8 +89,52 @@ class Supervisor:
         self._rate_lock = threading.Lock()
         self._rate_hits: list[float] = []
 
+    def fix_permissions(self) -> None:
+        """Grants the `gamedata` group read access (dirs: +traverse too)
+        across everything under SERVER_DIR. This agent's uid (10000) OWNS
+        every one of these files/dirs, so - unlike the best-effort chmod
+        attempted from the dashboard side, a different uid entirely (see
+        dashboard/Dockerfile) - this never depends on root or any cross-
+        container privilege: a file's own owner can always chmod it.
+
+        Exists because some game software creates save files via an
+        explicitly-0600 temp-file-then-atomic-rename pattern regardless of
+        the process umask (observed in production for Minecraft's
+        world/level.dat and level.dat_old, which made
+        dashboard/app/services/backup.py's create() skip them with
+        PermissionError even though this container had just cleanly
+        stopped, not crashed). entrypoint.sh's own boot-time chmod pass
+        can only ever fix what already exists AT boot - it can't catch a
+        save that happens afterward - so this instead runs from
+        graceful_stop() below (reached both by a full container stop and
+        by the dashboard's standalone /lifecycle/stop) right after the
+        game finishes its shutdown save, plus once more here at start() to
+        catch up on anything an ungraceful kill (SIGKILL, OOM) skipped."""
+        fixed = 0
+        for root, dirs, files in os.walk(SERVER_DIR, followlinks=False):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+            for name in dirs:
+                path = os.path.join(root, name)
+                try:
+                    os.chmod(path, os.stat(path).st_mode | 0o050)
+                    fixed += 1
+                except OSError:
+                    pass
+            for name in files:
+                path = os.path.join(root, name)
+                if os.path.islink(path):
+                    continue
+                try:
+                    os.chmod(path, os.stat(path).st_mode | 0o040)
+                    fixed += 1
+                except OSError:
+                    pass
+        if fixed:
+            log(f"Permisos de grupo corregidos en {fixed} entrada(s) bajo {SERVER_DIR}")
+
     def start(self) -> None:
         SERVER_DIR.mkdir(parents=True, exist_ok=True)
+        self.fix_permissions()
         self.adapter.prepare(self.config, self.env, SERVER_DIR)
 
         # A brand new instance (or one just reprovisioned to a different
@@ -183,6 +227,8 @@ class Supervisor:
                 self.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 self.process.kill()
+
+        self.fix_permissions()
 
     def run_installer_jar(
         self, jar_name: str, minecraft_version: str, heap_mb: int, args: list[str], chmod_executable: str | None = None
@@ -286,6 +332,8 @@ def _make_handler(supervisor: Supervisor):
                 self._handle_lifecycle_stop()
             elif self.path == "/lifecycle/install":
                 self._handle_lifecycle_install()
+            elif self.path == "/lifecycle/fix_permissions":
+                self._handle_lifecycle_fix_permissions()
             else:
                 self._write_json(404, {"error": "no encontrado"})
 
@@ -355,6 +403,20 @@ def _make_handler(supervisor: Supervisor):
 
             result = supervisor.run_installer_jar(jar_name, minecraft_version, heap_mb, args, chmod_executable)
             self._write_json(200 if result.get("ok") else 502, result)
+
+        def _handle_lifecycle_fix_permissions(self) -> None:
+            # Manual/on-demand trigger for Supervisor.fix_permissions() -
+            # the dashboard's backup route calls this best-effort right
+            # before archiving game/, covering the case where the game
+            # process is stopped (via /lifecycle/stop) but this container
+            # is still up, so graceful_stop()'s own call already ran but a
+            # belt-and-suspenders re-check doesn't hurt. No-ops safely if
+            # unreachable (container fully stopped) - graceful_stop() is
+            # what covers that case instead, see its own comment.
+            if self._unauthorized():
+                return
+            supervisor.fix_permissions()
+            self._write_json(200, {"ok": True})
 
     return Handler
 

@@ -105,6 +105,51 @@ def test_start_with_nothing_installed_does_not_crash(monkeypatch, tmp_path):
     assert supervisor.is_running() is False
 
 
+def test_fix_permissions_grants_group_read_on_owner_only_files(monkeypatch, tmp_path):
+    """Regression test for a production incident: Minecraft writes
+    world/level.dat (and level.dat_old, via its atomic-save rename) with
+    an explicit 0600 mode regardless of the process umask, which the
+    dashboard's uid (only a supplementary `gamedata` group member, never
+    the owner) can never read - even right after a clean stop, since a
+    boot-time-only chmod pass can't catch a save that happens afterward.
+    fix_permissions() must grant group-read on exactly those cases."""
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    supervisor = _make_supervisor(monkeypatch)
+
+    world_dir = tmp_path / "world"
+    world_dir.mkdir()
+    level_dat = world_dir / "level.dat"
+    level_dat.write_bytes(b"nbt-data")
+    level_dat.chmod(0o600)
+
+    supervisor.fix_permissions()
+
+    if os.name != "nt":  # chmod bits aren't meaningful on Windows dev machines
+        assert level_dat.stat().st_mode & 0o070 == 0o040
+        assert world_dir.stat().st_mode & 0o070 == 0o050
+
+
+def test_fix_permissions_skips_symlinks(monkeypatch, tmp_path):
+    monkeypatch.setattr(gca, "SERVER_DIR", tmp_path)
+    supervisor = _make_supervisor(monkeypatch)
+
+    real_file = tmp_path / "real.txt"
+    real_file.write_text("x")
+    real_file.chmod(0o600)
+    link = tmp_path / "link.txt"
+    try:
+        link.symlink_to(real_file)
+    except OSError:
+        import pytest
+
+        pytest.skip("creating symlinks requires elevated privileges on this machine")
+
+    supervisor.fix_permissions()  # must not raise, and must not follow the symlink
+
+    if os.name != "nt":
+        assert real_file.stat().st_mode & 0o070 == 0o040
+
+
 def test_send_command_when_not_running(monkeypatch):
     supervisor = _make_supervisor(monkeypatch)
     supervisor.process = None

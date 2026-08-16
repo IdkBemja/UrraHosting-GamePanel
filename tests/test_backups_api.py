@@ -17,18 +17,22 @@ from tests.conftest import login
 
 @pytest.fixture(autouse=True)
 def _no_real_game_control_calls(monkeypatch):
-    """create_backup() best-effort sends save-off/save-on to the game
-    control agent (see MinecraftJavaAdapter.backup_pause_commands()) - the
-    dashboard_client fixture's GAME_CONTROL points at an unreachable
-    "game-runtime" host with no DNS/network in this test environment, which
-    would otherwise make every create_backup call here spend real time on
-    connection/DNS failures. Simulates "server not reachable", which is
-    exactly the case create_backup must already tolerate."""
+    """create_backup() best-effort calls out to the game control agent
+    twice - fix_permissions() (always) and save-off/save-on (Minecraft
+    Java only, see MinecraftJavaAdapter.backup_pause_commands()) - and both
+    ultimately go through GameControlClient._post(). The dashboard_client
+    fixture's GAME_CONTROL points at an unreachable "game-runtime" host
+    with no DNS/network in this test environment, which would otherwise
+    make every create_backup call here spend real time on connection/DNS
+    failures. Patching _post (not send_command/fix_permissions
+    individually) covers both call sites in one place and simulates
+    "server not reachable", which is exactly the case create_backup must
+    already tolerate."""
 
-    def _unreachable(self, command):
+    def _unreachable(self, path, body, *, timeout):
         raise GameControlError("server not reachable in tests")
 
-    monkeypatch.setattr(GameControlClient, "send_command", _unreachable)
+    monkeypatch.setattr(GameControlClient, "_post", _unreachable)
 
 
 def _seed_game_dir(tmp_path):
@@ -89,6 +93,31 @@ def test_create_backup_pauses_and_resumes_autosave_for_minecraft_java(dashboard_
     _wait_for_backup_done(dashboard_client)
     # Resume is sent once the background archive copy actually finishes.
     assert calls == ["save-all flush", "save-off", "save-on"]
+
+
+def test_create_backup_asks_game_control_to_fix_permissions_first(dashboard_client, tmp_path, monkeypatch):
+    """Regression test for the production incident where world/level.dat
+    and level.dat_old were skipped from a backup even with the server
+    fully stopped - Minecraft writes those with an explicit 0600 mode on
+    every save regardless of umask, and only the game-runtime container's
+    uid (the actual file owner) can fix that reliably (see
+    GameControlClient.fix_permissions() / Supervisor.fix_permissions() in
+    runtime/game_control_agent.py). create_backup() must call it before
+    archiving, not just rely on graceful_stop() having already done so."""
+    _seed_game_dir(tmp_path)
+    token = login(dashboard_client)
+
+    calls = []
+
+    def _record_post(self, path, body, *, timeout):
+        calls.append(path)
+        return {"ok": True}
+
+    monkeypatch.setattr(GameControlClient, "_post", _record_post)
+
+    response = dashboard_client.post("/api/backups/create", headers={"X-CSRFToken": token})
+    assert response.status_code == 202
+    assert calls[0] == "/lifecycle/fix_permissions"
 
 
 def test_create_backup_rejects_concurrent_request(dashboard_client, tmp_path):

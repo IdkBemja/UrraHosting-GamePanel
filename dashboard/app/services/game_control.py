@@ -45,6 +45,17 @@ class GameControlClient:
     def send_command(self, command: str) -> dict:
         return self._post("/command", {"command": command}, timeout=_TIMEOUT)
 
+    def fix_permissions(self) -> dict:
+        """Asks the agent to grant the shared `gamedata` group read access
+        across game/ - see Supervisor.fix_permissions() in
+        runtime/game_control_agent.py for why only that side (this
+        container's uid never owns those files) can do this reliably.
+        Called best-effort by the Backups tab's create route right before
+        archiving; graceful_stop() already calls this itself on every
+        clean shutdown, so this mainly matters when the container is up
+        but the game process was stopped independently."""
+        return self._post("/lifecycle/fix_permissions", {}, timeout=_TIMEOUT)
+
     def stop_game(self) -> dict:
         """Stops only the child game process - the agent/container stay up,
         unlike DockerClient.stop() (a full `docker stop`). Used before a

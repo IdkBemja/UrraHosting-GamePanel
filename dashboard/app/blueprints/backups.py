@@ -68,6 +68,17 @@ def create_backup():
         elif error:
             activity.record("backup_failed", {"error": error})
 
+    try:
+        # Best-effort: only this container's uid owns game/, so it's the
+        # only one that can reliably grant the shared group read access
+        # some save files lose on every write (see
+        # GameControlClient.fix_permissions()'s docstring). No-ops
+        # silently if the container is stopped - graceful_stop() on that
+        # side already did this on the way down in that case.
+        game_control.fix_permissions()
+    except GameControlError:
+        pass
+
     _run_backup_commands(game_control, pause_commands)
     try:
         service.start_create_async(actor=actor, on_done=_on_done)
