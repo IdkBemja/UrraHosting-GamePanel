@@ -11,6 +11,7 @@ real against a temp DATA_ROOT.
 from __future__ import annotations
 
 import json
+import os
 
 from app.services.catalog import DownloadInfo
 from app.services.installer import InstallResult
@@ -93,6 +94,28 @@ def test_reprovision_writes_override_file(dashboard_client, monkeypatch, tmp_pat
     assert data["GAME_FAMILY"] == "terraria"
     assert data["GAME_EDITION"] == ""
     assert data["GAME_SOFTWARE"] == "vanilla"
+
+
+def test_reprovision_from_hard_difficulty_leaves_new_adapter_bootable(dashboard_client, monkeypatch, tmp_path):
+    """Regression test: a Minecraft instance with DIFFICULTY=hard (valid for
+    Minecraft, meaningless for Terraria) reprovisioned to Terraria must not
+    leave the effective DIFFICULTY as "hard" - that value only ever lived in
+    the base process env (this fixture's DIFFICULTY=hard), never in the
+    override file, so simply deleting the override key isn't enough: the
+    game-runtime container's boot-time validate_extra() would still see
+    "hard" and crash-loop (see config/instance_state.py's
+    default_gameplay_settings())."""
+    monkeypatch.setenv("DIFFICULTY", "hard")
+
+    _install_terraria(dashboard_client, monkeypatch)
+
+    from config.instance_state import effective_environ
+    from runtime.adapters.terraria import TerrariaAdapter
+
+    override_path = tmp_path / "install" / "instance_override.json"
+    env = effective_environ(dict(os.environ), path=override_path)
+    assert env["DIFFICULTY"] != "hard"
+    assert TerrariaAdapter().validate_extra(env) == []
 
 
 def test_overview_reflects_reprovision_on_next_request(dashboard_client, monkeypatch):

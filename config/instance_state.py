@@ -98,6 +98,29 @@ def write_override(values: Mapping[str, str], path: Path = DEFAULT_OVERRIDE_PATH
         raise
 
 
+def default_gameplay_settings(game_family: str, game_edition: str) -> dict[str, str]:
+    """The DIFFICULTY/GAMEMODE/ONLINE_MODE values (see SETTINGS_KEYS) that
+    are valid for a FRESH instance of this game/edition - mirrors each
+    runtime/adapters/*.py's own "no value set" fallback.
+
+    Used by the Software tab's reprovision path (dashboard/app/blueprints/
+    catalog.py) to seed the override with values its NEW adapter actually
+    accepts. Merely deleting the old override keys is not enough: the base
+    process environment (whatever `.env` says) still supplies a value for
+    an unset key, and that value was chosen for the OLD family - e.g. a
+    Minecraft instance's DIFFICULTY=hard would otherwise resurface as the
+    "effective" value for Terraria (whose adapter only accepts classic/
+    expert/master/journey) and crash-loop the container on every restart."""
+    if game_family == "terraria":
+        return {"DIFFICULTY": "classic"}
+    if game_family == "minecraft":
+        settings = {"DIFFICULTY": "easy", "GAMEMODE": "survival"}
+        if game_edition == "java":
+            settings["ONLINE_MODE"] = "true"
+        return settings
+    return {}
+
+
 def remove_override_keys(keys: frozenset[str] | set[str], path: Path = DEFAULT_OVERRIDE_PATH) -> None:
     """Drops `keys` from the override file, keeping every other field as-is.
     Used when reprovisioning to a different game/edition/software (see

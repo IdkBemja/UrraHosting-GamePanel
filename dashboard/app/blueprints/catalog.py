@@ -15,7 +15,7 @@ from __future__ import annotations
 from flask import Blueprint, current_app, g, jsonify, request
 
 from config.game_config import catalog_structure, is_valid_combo
-from config.instance_state import remove_override_keys, write_override
+from config.instance_state import default_gameplay_settings, remove_override_keys, write_override
 
 from ..services.catalog import CatalogError
 from ..services.docker_client import DockerControlError
@@ -146,27 +146,31 @@ def install():
 
     progress.update("writing_config", "Guardando configuracion...")
     override_path = current_app.config["INSTALL_DIR"] / "instance_override.json"
+    identity_updates = {
+        "GAME_FAMILY": game_family,
+        "GAME_EDITION": game_edition,
+        "GAME_SOFTWARE": software,
+        "GAME_VERSION": version,
+        "CHANNEL": channel,
+        "LICENSE_ACCEPTED": "true" if (config.license_accepted or license_accepted) else "false",
+    }
     if is_reprovision:
         # DIFFICULTY/GAMEMODE/ONLINE_MODE (Configuracion tab) are validated
         # against the OLD adapter's own rules (runtime/adapters/*.py) - a
         # saved value can be meaningless or outright invalid for the new
-        # game/edition (Terraria's difficulty values aren't Minecraft's),
-        # so they must not silently carry over. MOTD/MAX_PLAYERS are
-        # universal and are left as they are.
+        # game/edition (Terraria's difficulty values aren't Minecraft's), so
+        # they must not silently carry over. Dropping them isn't enough on
+        # its own: the base process environment (whatever `.env` says)
+        # still supplies a value for an unset key, chosen for the OLD
+        # family, so a fresh default for the NEW family is written too -
+        # see default_gameplay_settings()'s docstring for the crash-loop
+        # this used to cause. MOTD/MAX_PLAYERS are universal and are left
+        # as they are.
         remove_override_keys({"DIFFICULTY", "GAMEMODE", "ONLINE_MODE"}, path=override_path)
+        identity_updates.update(default_gameplay_settings(game_family, game_edition))
     # Written only after a successful install, so a failed install never
     # leaves the override pointing at software that isn't actually there.
-    write_override(
-        {
-            "GAME_FAMILY": game_family,
-            "GAME_EDITION": game_edition,
-            "GAME_SOFTWARE": software,
-            "GAME_VERSION": version,
-            "CHANNEL": channel,
-            "LICENSE_ACCEPTED": "true" if (config.license_accepted or license_accepted) else "false",
-        },
-        path=override_path,
-    )
+    write_override(identity_updates, path=override_path)
 
     current_app.config["ACTIVITY"].record(
         "install",

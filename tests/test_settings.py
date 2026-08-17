@@ -156,8 +156,11 @@ def test_update_settings_records_activity(dashboard_client):
 def test_reprovision_clears_adapter_specific_settings_but_keeps_universal_ones(dashboard_client, monkeypatch, tmp_path):
     """A DIFFICULTY/GAMEMODE saved for the OLD adapter can be meaningless or
     outright invalid for the new one (Terraria's difficulty values aren't
-    Minecraft's) - reprovisioning must drop those, but MOTD/MAX_PLAYERS are
-    universal and should survive."""
+    Minecraft's) - reprovisioning must replace DIFFICULTY with a fresh, valid
+    default for the NEW adapter (not just drop it - see
+    config/instance_state.py's default_gameplay_settings() for why a dropped
+    key isn't safe either) and drop GAMEMODE outright since Terraria has no
+    such setting. MOTD/MAX_PLAYERS are universal and should survive."""
     token = login(dashboard_client)
     dashboard_client.post(
         "/api/settings",
@@ -201,7 +204,7 @@ def test_reprovision_clears_adapter_specific_settings_but_keeps_universal_ones(d
 
     override_path = tmp_path / "install" / "instance_override.json"
     saved = json.loads(override_path.read_text())
-    assert "DIFFICULTY" not in saved
+    assert saved["DIFFICULTY"] == "classic"
     assert "GAMEMODE" not in saved
     assert saved["MOTD"] == "Server viejo"
     assert saved["MAX_PLAYERS"] == "7"
