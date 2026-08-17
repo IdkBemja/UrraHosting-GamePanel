@@ -65,7 +65,11 @@ class TModLoaderAdapter(GameRuntimeAdapter):
         if not world_path.exists():
             values["autocreate"] = "2"
 
-        upsert_properties(server_dir / "serverconfig.txt", values)
+        # autocreate must be GONE (not merely unset) once a real world
+        # exists - see runtime/adapters/terraria.py's prepare() for why a
+        # stale value left behind after the world is created corrupts the
+        # server's state on every subsequent boot.
+        upsert_properties(server_dir / "serverconfig.txt", values, remove={"autocreate"})
 
     def launch_command(self, config, env: Mapping[str, str], server_dir: Path) -> list[str]:
         launcher = server_dir / "start-tModLoaderServer.sh"

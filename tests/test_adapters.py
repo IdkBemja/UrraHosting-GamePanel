@@ -256,6 +256,32 @@ def test_terraria_prepare_skips_autocreate_when_world_exists(tmp_path):
     assert "autocreate" not in content
 
 
+def test_terraria_prepare_removes_stale_autocreate_once_world_exists(tmp_path):
+    """Regression test (forum-confirmed bug: a stale/mismatched `autocreate`
+    surviving in serverconfig.txt after a real world exists corrupts server
+    state - see
+    https://forums.terraria.org/index.php?threads/world-breaks-for-dedicated-servers-if-autocreate-config-option-is-set-incorrectly.146226/
+    and the SaveFileFormatHeader NullReferenceException it can cause).
+    prepare() runs on every container start, not just the first: the first
+    boot (world missing) correctly writes autocreate=2, but the world file
+    that boot creates only exists AFTER Terraria itself has started - so the
+    NEXT boot's prepare() must actively drop that now-stale line, not just
+    skip re-adding it (upsert_properties() alone leaves untouched keys as
+    they were)."""
+    adapter = get_adapter("terraria", "", "vanilla")
+    env = _terraria_env()
+    config = _config(**env)
+
+    adapter.prepare(config, env, tmp_path)
+    assert "autocreate=2" in (tmp_path / "serverconfig.txt").read_text()
+
+    (tmp_path / "worlds" / "world.wld").write_bytes(b"fake")
+    adapter.prepare(config, env, tmp_path)
+    content = (tmp_path / "serverconfig.txt").read_text()
+    assert "autocreate" not in content
+    assert "port=7777" in content
+
+
 def test_terraria_launch_command_requires_binary(tmp_path):
     adapter = get_adapter("terraria", "", "vanilla")
     config = _config(GAME_FAMILY="terraria", GAME_EDITION="", GAME_SOFTWARE="vanilla", GAME_PORT="7777", RCON_PASSWORD="")

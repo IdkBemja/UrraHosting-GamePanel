@@ -62,7 +62,14 @@ class TerrariaAdapter(GameRuntimeAdapter):
             # does not exist yet.
             values["autocreate"] = "2"
 
-        upsert_properties(server_dir / "serverconfig.txt", values)
+        # autocreate must be GONE (not merely unset) once a real world
+        # exists: prepare() runs on every container start, and the world
+        # file this created only appears after that boot finishes, so the
+        # *next* boot is the one that must drop it. A stale autocreate
+        # surviving alongside a real/differently-sized world confuses the
+        # server's own world-bounds state and can corrupt saves (see
+        # https://forums.terraria.org/index.php?threads/world-breaks-for-dedicated-servers-if-autocreate-config-option-is-set-incorrectly.146226/).
+        upsert_properties(server_dir / "serverconfig.txt", values, remove={"autocreate"})
 
     def launch_command(self, config, env: Mapping[str, str], server_dir: Path) -> list[str]:
         binary = server_dir / "TerrariaServer.bin.x86_64"
