@@ -86,9 +86,18 @@ def create_app() -> Flask:
         raise RuntimeError("Configuracion de instancia invalida: " + "; ".join(result.errors))
 
     adapter = get_adapter(config.game_family, config.game_edition, config.game_software)
-    extra_errors = adapter.validate_extra(boot_env)
-    if extra_errors:
-        raise RuntimeError("Configuracion de adaptador invalida: " + "; ".join(extra_errors))
+    # validate_extra() only ever checks the Configuracion tab's own
+    # self-service fields (DIFFICULTY/GAMEMODE/ONLINE_MODE - see
+    # dashboard/app/blueprints/settings.py's SETTINGS_KEYS), which the admin
+    # can only fix FROM that tab. Refusing to boot the dashboard over one of
+    # these (as opposed to `config is None` above, which is a structurally
+    # broken instance identity) would lock the admin out of the one place
+    # that can fix it - so this is a startup warning, not a crash. The
+    # game-runtime container still independently refuses to boot on the same
+    # invalid value (config/validate_cli.py), which is the correct place to
+    # enforce it.
+    for error in adapter.validate_extra(boot_env):
+        print(f"[dashboard][warn] Ajuste de juego invalido, corrigelo en la pestana Configuracion: {error}")
 
     for warning in result.warnings:
         print(f"[dashboard][warn] {warning}")

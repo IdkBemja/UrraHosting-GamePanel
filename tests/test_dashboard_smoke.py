@@ -75,6 +75,47 @@ def test_login_wrong_password_rejected(client):
     assert b"Credenciales invalidas" in response.data
 
 
+def test_boot_survives_invalid_gameplay_setting(tmp_path, monkeypatch):
+    """Regression test: an instance whose base env has an adapter-invalid
+    DIFFICULTY (e.g. left over from a reprovision to a different game
+    family - see tests/test_reprovision_flow.py) must not crash the whole
+    dashboard at boot. That value is only ever fixable FROM the running
+    dashboard's Configuracion tab, so create_app() must still succeed (with
+    a printed warning) instead of raising - only the game-runtime container
+    is meant to refuse to boot over it."""
+    monkeypatch.setattr(main_module, "_DATA_ROOT", tmp_path)
+    env = base_env(GAME_FAMILY="terraria", GAME_EDITION="", GAME_SOFTWARE="vanilla", GAME_VERSION="1.4.4.9", DIFFICULTY="hard")
+    env["DOCKER_HOST"] = "tcp://127.0.0.1:1"
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    flask_app = main_module.create_app()
+    flask_app.config["TESTING"] = True
+    with flask_app.test_client() as test_client:
+        login_page = test_client.get("/login")
+        token = _csrf_token(login_page.get_data(as_text=True))
+        response = test_client.post(
+            "/login", data={"username": "admin", "password": "a-strong-password", "csrf_token": token}, follow_redirects=True
+        )
+        assert response.status_code == 200
+        assert b"dashboard-shell" in response.data
+
+
+def test_boot_still_fails_on_structurally_invalid_config(tmp_path, monkeypatch):
+    """The distinction test_boot_survives_invalid_gameplay_setting relies on:
+    a broken instance IDENTITY (not a self-service settings field) must
+    still fail loudly at boot - there is no tab that could fix a bogus
+    GAME_FAMILY from within the dashboard."""
+    monkeypatch.setattr(main_module, "_DATA_ROOT", tmp_path)
+    env = base_env(GAME_FAMILY="not-a-real-game")
+    env["DOCKER_HOST"] = "tcp://127.0.0.1:1"
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
+    with pytest.raises(RuntimeError, match="Configuracion de instancia invalida"):
+        main_module.create_app()
+
+
 def test_security_headers_present(client):
     response = client.get("/login")
     assert response.headers["X-Content-Type-Options"] == "nosniff"
