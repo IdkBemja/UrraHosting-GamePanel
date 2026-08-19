@@ -38,14 +38,18 @@ DEFAULT_OVERRIDE_PATH = Path("/data/install/instance_override.json")
 IDENTITY_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME_VERSION", "CHANNEL", "LICENSE_ACCEPTED"})
 # Curated, safe-to-self-serve gameplay settings (dashboard/app/blueprints/
 # settings.py's "Configuracion" tab) - deliberately NOT the whole of
-# server.properties/serverconfig.txt: no ports, paths, world/level name or
-# credentials here, only values each runtime/adapters/*.py implementation
-# already treats as plain gameplay knobs in its own validate_extra(). Not
-# every key applies to every adapter (e.g. ONLINE_MODE only exists for
-# Minecraft Java, SECURE only for Terraria/tModLoader) - settings.py's
-# _applicable_keys() is the actual per-game whitelist; this frozenset is
-# just the outer bound both read_override() and write_override() enforce.
-SETTINGS_KEYS = frozenset({"MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE", "ONLINE_MODE", "SECURE"})
+# server.properties/serverconfig.txt: no ports, paths or credentials here,
+# only values each runtime/adapters/*.py implementation already treats as
+# plain gameplay knobs in its own validate_extra(). WORLD_NAME is the one
+# path-adjacent exception, allowed only for Terraria/tModLoader (see
+# settings.py's _applicable_keys()): config/game_config.py's _WORLD_NAME_RE
+# already forbids path separators, so it cannot be used to escape the
+# worlds/ directory. Not every key applies to every adapter (e.g.
+# ONLINE_MODE only exists for Minecraft Java, SECURE/WORLD_NAME only for
+# Terraria/tModLoader) - settings.py's _applicable_keys() is the actual
+# per-game whitelist; this frozenset is just the outer bound both
+# read_override() and write_override() enforce.
+SETTINGS_KEYS = frozenset({"MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE", "ONLINE_MODE", "SECURE", "WORLD_NAME"})
 # Only these keys may ever come from the override file. Secrets, ports,
 # resource limits, etc. always come from the real process environment -
 # the override file cannot be used to smuggle a different secret in.

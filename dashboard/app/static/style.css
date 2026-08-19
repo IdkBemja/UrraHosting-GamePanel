@@ -871,6 +871,12 @@ select:focus-visible,
   gap: 0.5rem;
 }
 
+.settings-field-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
 .settings-actions {
   grid-column: 1 / -1;
   display: flex;

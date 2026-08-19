@@ -1261,6 +1261,7 @@ function buildSettingsField(field) {
     input = document.createElement("input");
     input.type = "text";
     if (field.max_length) input.maxLength = field.max_length;
+    if (field.pattern) input.pattern = field.pattern;
     input.value = field.value;
   }
   input.id = id;
@@ -1275,6 +1276,13 @@ function buildSettingsField(field) {
     wrap.append(input, label);
   } else {
     wrap.append(label, input);
+  }
+
+  if (field.help) {
+    const hint = document.createElement("small");
+    hint.className = "settings-field-hint";
+    hint.textContent = field.help;
+    wrap.append(hint);
   }
   return wrap;
 }

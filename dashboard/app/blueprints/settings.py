@@ -1,10 +1,19 @@
 """Lets an admin edit a curated, SAFE subset of per-game gameplay settings
 (MOTD, max players, difficulty, gamemode, online-mode, Terraria/tModLoader's
-anticheat "secure" flag) from a "Configuracion" tab, without exposing the
-real server.properties/serverconfig.txt (ports,
-world/level name, RCON credentials - anything the panel itself manages or
-that could orphan existing data stays out of reach here) and without any new
-Docker privileges.
+anticheat "secure" flag and world name) from a "Configuracion" tab, without
+exposing the real server.properties/serverconfig.txt (ports, RCON
+credentials - anything the panel itself manages stays out of reach here) and
+without any new Docker privileges.
+
+WORLD_NAME is the one path-adjacent field exposed here, and only for
+Terraria/tModLoader: runtime/adapters/terraria.py and tmodloader.py derive
+the .wld path from it (worlds/<WORLD_NAME>.wld) and re-point serverconfig.txt's
+`world=`/`worldname=` at it on the next boot. Changing it does NOT rename the
+existing world file - if no worlds/<new name>.wld exists yet, the adapter's
+autocreate=2 fallback generates a brand new world under that name on next
+start, while the old file is left untouched on disk (recoverable from the
+Archivos tab). Minecraft's level-name is deliberately NOT exposed here yet -
+out of scope for this change.
 
 Reuses the exact mechanism the Software tab's reprovisioning already uses
 (config/instance_state.py's override file, additive here via a disjoint key
@@ -46,6 +55,11 @@ _GAMEMODE_OPTIONS = {
     "bedrock": ["survival", "creative", "adventure"],
 }
 _GAMEMODE_DEFAULT = "survival"
+# Mirrors config/game_config.py's _WORLD_NAME_RE - kept as a plain string
+# (not imported) since this only feeds the frontend's HTML `pattern`
+# attribute for inline feedback; the actual enforcement is validate_contract()
+# in update_settings() below, same as every other field here.
+_WORLD_NAME_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
 
 
 def _applicable_keys(config) -> tuple[str, ...]:
@@ -58,7 +72,7 @@ def _applicable_keys(config) -> tuple[str, ...]:
     if config.game_family == "minecraft" and config.game_edition == "bedrock":
         return ("MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE")
     if config.game_family == "terraria":
-        return ("MAX_PLAYERS", "DIFFICULTY", "SECURE")
+        return ("MAX_PLAYERS", "DIFFICULTY", "SECURE", "WORLD_NAME")
     return ()
 
 
@@ -82,6 +96,20 @@ def _field_schema(key: str, config, env: dict) -> dict:
     if key == "SECURE":
         value = (env.get("SECURE") or "true").strip().lower() in _BOOL_TRUE
         return {"key": key, "type": "bool", "label": "Modo seguro (anticheat)", "value": value}
+    if key == "WORLD_NAME":
+        return {
+            "key": key,
+            "type": "string",
+            "label": "Nombre del mundo",
+            "value": config.world_name,
+            "max_length": 64,
+            "pattern": _WORLD_NAME_PATTERN,
+            "help": (
+                "Solo letras, numeros, puntos, guiones y guiones bajos. Si no existe un "
+                "mundo con este nombre, se creara uno nuevo al reiniciar; el mundo "
+                "anterior no se borra (pestana Archivos)."
+            ),
+        }
     raise AssertionError(f"clave de ajuste desconocida: {key}")  # pragma: no cover - _applicable_keys() is the only caller
 
 
@@ -132,6 +160,8 @@ def update_settings():
         updates["ONLINE_MODE"] = "true" if payload["ONLINE_MODE"] in (True, "true", "1", 1, "on", "yes") else "false"
     if "SECURE" in payload:
         updates["SECURE"] = "true" if payload["SECURE"] in (True, "true", "1", 1, "on", "yes") else "false"
+    if "WORLD_NAME" in payload:
+        updates["WORLD_NAME"] = str(payload["WORLD_NAME"]).strip()
 
     override_path = _override_path()
     # Same env the game-runtime container's own boot-time validation

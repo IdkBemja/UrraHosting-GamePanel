@@ -55,19 +55,61 @@ def test_get_settings_excludes_online_mode_for_bedrock(dashboard_client, tmp_pat
     assert "spectator" not in gamemode["options"]  # Bedrock has no spectator mode
 
 
-def test_get_settings_terraria_only_maxplayers_difficulty_and_secure(dashboard_client, tmp_path):
+def test_get_settings_terraria_only_maxplayers_difficulty_secure_and_worldname(dashboard_client, tmp_path):
     override_path = tmp_path / "install" / "instance_override.json"
     write_override({"GAME_FAMILY": "terraria", "GAME_EDITION": "", "GAME_SOFTWARE": "vanilla", "GAME_VERSION": "1.4.4.9"}, path=override_path)
     login(dashboard_client)
     response = dashboard_client.get("/api/settings")
     data = response.get_json()
     keys = {field["key"] for field in data["settings"]}
-    assert keys == {"MAX_PLAYERS", "DIFFICULTY", "SECURE"}
+    assert keys == {"MAX_PLAYERS", "DIFFICULTY", "SECURE", "WORLD_NAME"}
     difficulty = next(f for f in data["settings"] if f["key"] == "DIFFICULTY")
     assert difficulty["options"] == ["classic", "expert", "master", "journey"]
     secure = next(f for f in data["settings"] if f["key"] == "SECURE")
     assert secure["type"] == "bool"
     assert secure["value"] is True  # default, nothing overridden yet
+    world_name = next(f for f in data["settings"] if f["key"] == "WORLD_NAME")
+    assert world_name["type"] == "string"
+    assert world_name["value"] == "world"  # WORLD_NAME default from conftest
+
+
+def test_update_settings_can_rename_terraria_world(dashboard_client, tmp_path):
+    override_path = tmp_path / "install" / "instance_override.json"
+    write_override(
+        {"GAME_FAMILY": "terraria", "GAME_EDITION": "", "GAME_SOFTWARE": "vanilla", "GAME_VERSION": "1.4.4.9", "DIFFICULTY": "classic"},
+        path=override_path,
+    )
+    token = login(dashboard_client)
+    response = dashboard_client.post("/api/settings", json={"WORLD_NAME": "MyNewWorld"}, headers={"X-CSRFToken": token})
+    assert response.status_code == 200, response.get_json()
+
+    saved = json.loads(override_path.read_text())
+    assert saved["WORLD_NAME"] == "MyNewWorld"
+
+    follow_up = dashboard_client.get("/api/settings")
+    world_name = next(f for f in follow_up.get_json()["settings"] if f["key"] == "WORLD_NAME")
+    assert world_name["value"] == "MyNewWorld"
+
+
+def test_update_settings_rejects_invalid_world_name(dashboard_client, tmp_path):
+    override_path = tmp_path / "install" / "instance_override.json"
+    write_override(
+        {"GAME_FAMILY": "terraria", "GAME_EDITION": "", "GAME_SOFTWARE": "vanilla", "GAME_VERSION": "1.4.4.9", "DIFFICULTY": "classic"},
+        path=override_path,
+    )
+    token = login(dashboard_client)
+    response = dashboard_client.post("/api/settings", json={"WORLD_NAME": "../../etc/passwd"}, headers={"X-CSRFToken": token})
+    assert response.status_code == 400
+    assert "WORLD_NAME" in response.get_json()["error"]
+
+
+def test_update_settings_rejects_world_name_for_minecraft(dashboard_client):
+    """WORLD_NAME is only editable here for Terraria/tModLoader - the default
+    dashboard_client instance is minecraft/java, where level-name is not
+    exposed through this endpoint."""
+    token = login(dashboard_client)
+    response = dashboard_client.post("/api/settings", json={"WORLD_NAME": "somename"}, headers={"X-CSRFToken": token})
+    assert response.status_code == 400
 
 
 def test_update_settings_can_disable_terraria_secure(dashboard_client, tmp_path):
