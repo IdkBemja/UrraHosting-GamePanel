@@ -42,10 +42,10 @@ IDENTITY_KEYS = frozenset({"GAME_FAMILY", "GAME_EDITION", "GAME_SOFTWARE", "GAME
 # credentials here, only values each runtime/adapters/*.py implementation
 # already treats as plain gameplay knobs in its own validate_extra(). Not
 # every key applies to every adapter (e.g. ONLINE_MODE only exists for
-# Minecraft Java) - settings.py's _applicable_keys() is the actual per-game
-# whitelist; this frozenset is just the outer bound both read_override() and
-# write_override() enforce.
-SETTINGS_KEYS = frozenset({"MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE", "ONLINE_MODE"})
+# Minecraft Java, SECURE only for Terraria/tModLoader) - settings.py's
+# _applicable_keys() is the actual per-game whitelist; this frozenset is
+# just the outer bound both read_override() and write_override() enforce.
+SETTINGS_KEYS = frozenset({"MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE", "ONLINE_MODE", "SECURE"})
 # Only these keys may ever come from the override file. Secrets, ports,
 # resource limits, etc. always come from the real process environment -
 # the override file cannot be used to smuggle a different secret in.
@@ -99,7 +99,7 @@ def write_override(values: Mapping[str, str], path: Path = DEFAULT_OVERRIDE_PATH
 
 
 def default_gameplay_settings(game_family: str, game_edition: str) -> dict[str, str]:
-    """The DIFFICULTY/GAMEMODE/ONLINE_MODE values (see SETTINGS_KEYS) that
+    """The DIFFICULTY/GAMEMODE/ONLINE_MODE/SECURE values (see SETTINGS_KEYS) that
     are valid for a FRESH instance of this game/edition - mirrors each
     runtime/adapters/*.py's own "no value set" fallback.
 
@@ -112,7 +112,7 @@ def default_gameplay_settings(game_family: str, game_edition: str) -> dict[str, 
     "effective" value for Terraria (whose adapter only accepts classic/
     expert/master/journey) and crash-loop the container on every restart."""
     if game_family == "terraria":
-        return {"DIFFICULTY": "classic"}
+        return {"DIFFICULTY": "classic", "SECURE": "true"}
     if game_family == "minecraft":
         settings = {"DIFFICULTY": "easy", "GAMEMODE": "survival"}
         if game_edition == "java":

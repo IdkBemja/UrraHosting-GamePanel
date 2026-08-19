@@ -282,6 +282,39 @@ def test_terraria_prepare_removes_stale_autocreate_once_world_exists(tmp_path):
     assert "port=7777" in content
 
 
+def test_terraria_prepare_defaults_secure_to_enabled(tmp_path):
+    adapter = get_adapter("terraria", "", "vanilla")
+    env = _terraria_env()
+    config = _config(**env)
+    adapter.prepare(config, env, tmp_path)
+    content = (tmp_path / "serverconfig.txt").read_text()
+    assert "secure=1" in content
+
+
+def test_terraria_prepare_can_disable_secure(tmp_path):
+    adapter = get_adapter("terraria", "", "vanilla")
+    env = _terraria_env(SECURE="false")
+    config = _config(**env)
+    adapter.prepare(config, env, tmp_path)
+    content = (tmp_path / "serverconfig.txt").read_text()
+    assert "secure=0" in content
+
+
+def test_terraria_validate_extra_rejects_invalid_secure():
+    adapter = get_adapter("terraria", "", "vanilla")
+    errors = adapter.validate_extra(_terraria_env(SECURE="maybe"))
+    assert any("SECURE" in e for e in errors)
+
+
+def test_tmodloader_prepare_can_disable_secure(tmp_path):
+    adapter = get_adapter("terraria", "", "tmodloader")
+    env = _terraria_env(SECURE="false")
+    config = _config(**env)
+    adapter.prepare(config, env, tmp_path)
+    content = (tmp_path / "serverconfig.txt").read_text()
+    assert "secure=0" in content
+
+
 def test_terraria_launch_command_requires_binary(tmp_path):
     adapter = get_adapter("terraria", "", "vanilla")
     config = _config(GAME_FAMILY="terraria", GAME_EDITION="", GAME_SOFTWARE="vanilla", GAME_PORT="7777", RCON_PASSWORD="")

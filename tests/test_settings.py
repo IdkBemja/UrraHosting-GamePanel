@@ -55,16 +55,45 @@ def test_get_settings_excludes_online_mode_for_bedrock(dashboard_client, tmp_pat
     assert "spectator" not in gamemode["options"]  # Bedrock has no spectator mode
 
 
-def test_get_settings_terraria_only_maxplayers_and_difficulty(dashboard_client, tmp_path):
+def test_get_settings_terraria_only_maxplayers_difficulty_and_secure(dashboard_client, tmp_path):
     override_path = tmp_path / "install" / "instance_override.json"
     write_override({"GAME_FAMILY": "terraria", "GAME_EDITION": "", "GAME_SOFTWARE": "vanilla", "GAME_VERSION": "1.4.4.9"}, path=override_path)
     login(dashboard_client)
     response = dashboard_client.get("/api/settings")
     data = response.get_json()
     keys = {field["key"] for field in data["settings"]}
-    assert keys == {"MAX_PLAYERS", "DIFFICULTY"}
+    assert keys == {"MAX_PLAYERS", "DIFFICULTY", "SECURE"}
     difficulty = next(f for f in data["settings"] if f["key"] == "DIFFICULTY")
     assert difficulty["options"] == ["classic", "expert", "master", "journey"]
+    secure = next(f for f in data["settings"] if f["key"] == "SECURE")
+    assert secure["type"] == "bool"
+    assert secure["value"] is True  # default, nothing overridden yet
+
+
+def test_update_settings_can_disable_terraria_secure(dashboard_client, tmp_path):
+    override_path = tmp_path / "install" / "instance_override.json"
+    write_override(
+        {"GAME_FAMILY": "terraria", "GAME_EDITION": "", "GAME_SOFTWARE": "vanilla", "GAME_VERSION": "1.4.4.9", "DIFFICULTY": "classic"},
+        path=override_path,
+    )
+    token = login(dashboard_client)
+    response = dashboard_client.post("/api/settings", json={"SECURE": False}, headers={"X-CSRFToken": token})
+    assert response.status_code == 200
+
+    saved = json.loads(override_path.read_text())
+    assert saved["SECURE"] == "false"
+
+    follow_up = dashboard_client.get("/api/settings")
+    secure = next(f for f in follow_up.get_json()["settings"] if f["key"] == "SECURE")
+    assert secure["value"] is False
+
+
+def test_update_settings_rejects_secure_for_minecraft(dashboard_client):
+    """SECURE only applies to Terraria/tModLoader - the default dashboard_client
+    instance is minecraft/java, so it must not be an editable key there."""
+    token = login(dashboard_client)
+    response = dashboard_client.post("/api/settings", json={"SECURE": False}, headers={"X-CSRFToken": token})
+    assert response.status_code == 400
 
 
 def test_update_settings_persists_and_is_reflected_on_next_get(dashboard_client, tmp_path):
@@ -205,6 +234,7 @@ def test_reprovision_clears_adapter_specific_settings_but_keeps_universal_ones(d
     override_path = tmp_path / "install" / "instance_override.json"
     saved = json.loads(override_path.read_text())
     assert saved["DIFFICULTY"] == "classic"
+    assert saved["SECURE"] == "true"
     assert "GAMEMODE" not in saved
     assert saved["MOTD"] == "Server viejo"
     assert saved["MAX_PLAYERS"] == "7"

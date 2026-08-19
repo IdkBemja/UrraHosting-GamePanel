@@ -155,18 +155,18 @@ def install():
         "LICENSE_ACCEPTED": "true" if (config.license_accepted or license_accepted) else "false",
     }
     if is_reprovision:
-        # DIFFICULTY/GAMEMODE/ONLINE_MODE (Configuracion tab) are validated
-        # against the OLD adapter's own rules (runtime/adapters/*.py) - a
-        # saved value can be meaningless or outright invalid for the new
-        # game/edition (Terraria's difficulty values aren't Minecraft's), so
-        # they must not silently carry over. Dropping them isn't enough on
-        # its own: the base process environment (whatever `.env` says)
-        # still supplies a value for an unset key, chosen for the OLD
-        # family, so a fresh default for the NEW family is written too -
-        # see default_gameplay_settings()'s docstring for the crash-loop
-        # this used to cause. MOTD/MAX_PLAYERS are universal and are left
-        # as they are.
-        remove_override_keys({"DIFFICULTY", "GAMEMODE", "ONLINE_MODE"}, path=override_path)
+        # DIFFICULTY/GAMEMODE/ONLINE_MODE/SECURE (Configuracion tab) are
+        # validated against the OLD adapter's own rules (runtime/adapters/
+        # *.py) - a saved value can be meaningless or outright invalid for
+        # the new game/edition (Terraria's difficulty values aren't
+        # Minecraft's), so they must not silently carry over. Dropping them
+        # isn't enough on its own: the base process environment (whatever
+        # `.env` says) still supplies a value for an unset key, chosen for
+        # the OLD family, so a fresh default for the NEW family is written
+        # too - see default_gameplay_settings()'s docstring for the
+        # crash-loop this used to cause. MOTD/MAX_PLAYERS are universal and
+        # are left as they are.
+        remove_override_keys({"DIFFICULTY", "GAMEMODE", "ONLINE_MODE", "SECURE"}, path=override_path)
         identity_updates.update(default_gameplay_settings(game_family, game_edition))
     # Written only after a successful install, so a failed install never
     # leaves the override pointing at software that isn't actually there.

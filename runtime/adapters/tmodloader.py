@@ -35,6 +35,9 @@ class TModLoaderAdapter(GameRuntimeAdapter):
         difficulty = (env.get("DIFFICULTY") or "classic").lower()
         if difficulty not in _DIFFICULTY_MAP:
             errors.append(f"DIFFICULTY: '{difficulty}' invalido, debe ser uno de {sorted(_DIFFICULTY_MAP)}")
+        secure = (env.get("SECURE") or "true").lower()
+        if secure not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            errors.append(f"SECURE: '{secure}' invalido")
         return errors
 
     def stop_command(self) -> str | None:
@@ -49,6 +52,7 @@ class TModLoaderAdapter(GameRuntimeAdapter):
             (server_dir / sub).mkdir(parents=True, exist_ok=True)
 
         difficulty = (env.get("DIFFICULTY") or "classic").strip().lower()
+        secure = (env.get("SECURE") or "true").strip().lower() in {"true", "1", "yes", "on"}
         world_path = self._world_path(config, server_dir)
 
         values = {
@@ -58,7 +62,7 @@ class TModLoaderAdapter(GameRuntimeAdapter):
             "maxplayers": str(config.max_players),
             "port": str(config.game_port),
             "password": "",
-            "secure": "1",
+            "secure": "1" if secure else "0",
             "upnp": "0",
             "banlist": "banlist.txt",
         }

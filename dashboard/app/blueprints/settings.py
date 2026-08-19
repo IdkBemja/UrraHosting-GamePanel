@@ -1,6 +1,7 @@
 """Lets an admin edit a curated, SAFE subset of per-game gameplay settings
-(MOTD, max players, difficulty, gamemode, online-mode) from a "Configuracion"
-tab, without exposing the real server.properties/serverconfig.txt (ports,
+(MOTD, max players, difficulty, gamemode, online-mode, Terraria/tModLoader's
+anticheat "secure" flag) from a "Configuracion" tab, without exposing the
+real server.properties/serverconfig.txt (ports,
 world/level name, RCON credentials - anything the panel itself manages or
 that could orphan existing data stays out of reach here) and without any new
 Docker privileges.
@@ -57,7 +58,7 @@ def _applicable_keys(config) -> tuple[str, ...]:
     if config.game_family == "minecraft" and config.game_edition == "bedrock":
         return ("MOTD", "MAX_PLAYERS", "DIFFICULTY", "GAMEMODE")
     if config.game_family == "terraria":
-        return ("MAX_PLAYERS", "DIFFICULTY")
+        return ("MAX_PLAYERS", "DIFFICULTY", "SECURE")
     return ()
 
 
@@ -78,6 +79,9 @@ def _field_schema(key: str, config, env: dict) -> dict:
     if key == "ONLINE_MODE":
         value = (env.get("ONLINE_MODE") or "true").strip().lower() in _BOOL_TRUE
         return {"key": key, "type": "bool", "label": "Modo online (verificacion de cuentas Mojang)", "value": value}
+    if key == "SECURE":
+        value = (env.get("SECURE") or "true").strip().lower() in _BOOL_TRUE
+        return {"key": key, "type": "bool", "label": "Modo seguro (anticheat)", "value": value}
     raise AssertionError(f"clave de ajuste desconocida: {key}")  # pragma: no cover - _applicable_keys() is the only caller
 
 
@@ -126,6 +130,8 @@ def update_settings():
         updates["GAMEMODE"] = str(payload["GAMEMODE"]).strip().lower()
     if "ONLINE_MODE" in payload:
         updates["ONLINE_MODE"] = "true" if payload["ONLINE_MODE"] in (True, "true", "1", 1, "on", "yes") else "false"
+    if "SECURE" in payload:
+        updates["SECURE"] = "true" if payload["SECURE"] in (True, "true", "1", 1, "on", "yes") else "false"
 
     override_path = _override_path()
     # Same env the game-runtime container's own boot-time validation
