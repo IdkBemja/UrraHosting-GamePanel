@@ -21,7 +21,12 @@ async function apiFetch(path, options) {
 /* Tabs                                                                    */
 /* ---------------------------------------------------------------------- */
 
-const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+// [data-tab] excludes #patchNotesButton, which reuses .tab-btn only for its
+// look - without this it gets wired up as a real tab (see the click
+// listener below and the Novedades click handler further down), and
+// clicking it calls activateTab(undefined), hiding every panel with none
+// matching "tab-undefined" - a blank dashboard behind the Novedades modal.
+const tabButtons = Array.from(document.querySelectorAll(".tab-btn[data-tab]"));
 const tabPanels = new Map(
   Array.from(document.querySelectorAll(".tab-panel")).map((panel) => [panel.id, panel])
 );
