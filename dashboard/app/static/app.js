@@ -1647,6 +1647,48 @@ async function loadVersion() {
 }
 
 /* ---------------------------------------------------------------------- */
+/* Novedades (patch notes)                                                 */
+/* ---------------------------------------------------------------------- */
+
+const patchNotesButton = document.getElementById("patchNotesButton");
+const patchNotesModal = document.getElementById("patchNotesModal");
+const patchNotesVersion = document.getElementById("patchNotesVersion");
+const patchNotesBody = document.getElementById("patchNotesBody");
+const patchNotesClose = document.getElementById("patchNotesClose");
+
+function openPatchNotesModal() {
+  patchNotesModal.classList.remove("is-hidden");
+}
+
+function closePatchNotesModal() {
+  patchNotesModal.classList.add("is-hidden");
+}
+
+// Fetches the current CHANGELOG.md entry (see dashboard/app/services/
+// patch_notes.py) and auto-opens the modal only if this logged-in user
+// hasn't dismissed THIS version yet - closing it marks it seen server-side
+// (per user, not per browser) so it stays hidden across sessions/devices
+// until the next version bump.
+async function loadPatchNotes() {
+  if (!patchNotesModal) return;
+  const { ok, data } = await apiFetch("/api/patchnotes");
+  if (!ok || !data) return;
+  patchNotesVersion.textContent = data.version;
+  patchNotesBody.innerHTML = data.html;
+  if (!data.seen) openPatchNotesModal();
+}
+
+patchNotesButton?.addEventListener("click", () => {
+  if (patchNotesBody.innerHTML) openPatchNotesModal();
+  else loadPatchNotes().then(openPatchNotesModal);
+});
+
+patchNotesClose?.addEventListener("click", async () => {
+  closePatchNotesModal();
+  await apiFetch("/api/patchnotes/dismiss", { method: "POST" });
+});
+
+/* ---------------------------------------------------------------------- */
 /* Users                                                                    */
 /* ---------------------------------------------------------------------- */
 
@@ -1724,6 +1766,7 @@ fetchStatus();
 loadOverview();
 loadResources();
 loadVersion();
+loadPatchNotes();
 setInterval(fetchStatus, 10000);
 setInterval(() => {
   if (document.getElementById("tab-overview") && !document.getElementById("tab-overview").hidden) {

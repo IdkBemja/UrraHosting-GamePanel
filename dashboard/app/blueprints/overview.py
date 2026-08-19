@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request, session
 
+from ..services import patch_notes
 from ..services.docker_client import DockerControlError
 from .auth import login_required
 
@@ -74,4 +75,21 @@ def activity():
 @bp.route("/version")
 @login_required
 def version():
-    return jsonify({"version": "v1.1.0-Stable"})
+    return jsonify({"version": patch_notes.current_version()})
+
+
+@bp.route("/patchnotes")
+@login_required
+def get_patch_notes():
+    notes = patch_notes.get_patch_notes()
+    user = current_app.config["USERS"].get(session["username"])
+    seen = bool(user) and user.get("dismissed_patch_notes_version") == notes.version
+    return jsonify({"version": notes.version, "html": notes.html, "seen": seen})
+
+
+@bp.route("/patchnotes/dismiss", methods=["POST"])
+@login_required
+def dismiss_patch_notes():
+    notes = patch_notes.get_patch_notes()
+    current_app.config["USERS"].mark_patch_notes_seen(session["username"], notes.version)
+    return jsonify({"ok": True})

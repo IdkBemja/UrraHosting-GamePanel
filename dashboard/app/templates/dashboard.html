@@ -16,6 +16,7 @@
       <button class="tab-btn" role="tab" id="tab-btn-activity" aria-controls="tab-activity" aria-selected="false" data-tab="activity" tabindex="-1"><i class="bi bi-clock-history"></i><span>Actividad</span></button>
       {% if session.get('role') == 'admin' %}<button class="tab-btn" role="tab" id="tab-btn-users" aria-controls="tab-users" aria-selected="false" data-tab="users" tabindex="-1"><i class="bi bi-people-fill"></i><span>Usuarios</span></button>{% endif %}
     </nav>
+    <button id="patchNotesButton" class="tab-btn sidebar-patchnotes-btn" type="button"><i class="bi bi-megaphone-fill"></i><span>Novedades</span></button>
     <div class="sidebar-user"><span class="user-avatar">{{ session.get('username', 'A')[0]|upper }}</span><span><strong>{{ session.get('username') }}</strong><small>{{ 'Administrador' if session.get('role') == 'admin' else 'Operador' }}</small></span><form method="post" action="{{ url_for('auth.logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="icon-btn" title="Cerrar sesion" aria-label="Cerrar sesion"><i class="bi bi-box-arrow-right"></i></button></form></div>
   </aside>
   <div class="dashboard-main">
@@ -98,6 +99,13 @@
       <a id="crashModalDiscord" class="btn discord" href="https://discord.urrahosting.cl" target="_blank" rel="noopener noreferrer"><i class="bi bi-discord"></i> Contactar Discord</a>
       <button id="crashModalClose" class="btn ghost" type="button">Cerrar</button>
     </div>
+  </div>
+</div>
+<div id="patchNotesModal" class="dialog-overlay is-hidden" role="dialog" aria-modal="true" aria-labelledby="patchNotesTitle">
+  <div class="dialog-box patch-notes-box">
+    <h2 id="patchNotesTitle"><i class="bi bi-megaphone-fill"></i> Novedades <span id="patchNotesVersion" class="muted small"></span></h2>
+    <div id="patchNotesBody" class="patch-notes-body"></div>
+    <div class="dialog-actions"><button id="patchNotesClose" class="btn" type="button">Cerrar</button></div>
   </div>
 </div>
 <div id="fileEditorModal" class="dialog-overlay is-hidden" role="dialog" aria-modal="true" aria-labelledby="fileEditorTitle">

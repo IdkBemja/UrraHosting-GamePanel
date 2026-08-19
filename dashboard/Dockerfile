@@ -50,6 +50,10 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY config /app/config
 COPY runtime /app/runtime
 COPY dashboard/app /app/app
+# Single source of truth for the panel's own version + "Novedades" modal
+# content (see app/services/patch_notes.py) - lives at the repo root (GitHub
+# convention) rather than under dashboard/app, so it needs its own COPY.
+COPY CHANGELOG.md /app/CHANGELOG.md
 
 RUN chown -R dashboard:dashboard /app
 

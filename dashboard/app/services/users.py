@@ -31,14 +31,29 @@ class UserStore:
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL CHECK(role IN ('admin', 'operator')),
                 active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                dismissed_patch_notes_version TEXT
             )""")
+            # Added after the table already shipped in earlier installs -
+            # CREATE TABLE IF NOT EXISTS above is a no-op against an existing
+            # DB file, so the column has to be backfilled separately here.
+            existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+            if "dismissed_patch_notes_version" not in existing_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN dismissed_patch_notes_version TEXT")
             conn.commit()
 
     def get(self, username: str) -> dict | None:
         with closing(self._connect()) as conn:
-            row = conn.execute("SELECT username, role, active, created_at FROM users WHERE username = ?", (username,)).fetchone()
+            row = conn.execute(
+                "SELECT username, role, active, created_at, dismissed_patch_notes_version FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
         return dict(row) if row else None
+
+    def mark_patch_notes_seen(self, username: str, version: str) -> None:
+        with closing(self._connect()) as conn:
+            conn.execute("UPDATE users SET dismissed_patch_notes_version = ? WHERE username = ?", (version, username))
+            conn.commit()
 
     def authenticate(self, username: str, password: str) -> dict | None:
         with closing(self._connect()) as conn:

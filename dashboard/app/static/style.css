@@ -971,6 +971,34 @@ select:focus-visible,
   width: min(760px, 94vw);
 }
 
+.patch-notes-box {
+  width: min(560px, 94vw);
+}
+
+.patch-notes-box h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.patch-notes-body {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  line-height: 1.55;
+}
+
+.patch-notes-body h3, .patch-notes-body h4 {
+  margin: 1rem 0 0.4rem;
+}
+
+.patch-notes-body ul, .patch-notes-body ol {
+  padding-left: 1.3rem;
+}
+
+.patch-notes-body p, .patch-notes-body li {
+  margin: 0.3rem 0;
+}
+
 .file-editor-textarea {
   display: block;
   width: 100%;

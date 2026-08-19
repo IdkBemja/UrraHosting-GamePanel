@@ -4,3 +4,5 @@ Flask-Limiter==3.8.0
 docker==7.1.0
 gunicorn==23.0.0
 requests==2.32.3
+Markdown==3.7
+nh3==0.2.18
