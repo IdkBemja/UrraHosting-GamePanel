@@ -303,11 +303,18 @@ class BackupService:
         archive_path = self._backups_dir / info.filename
         if not archive_path.exists():
             raise BackupError("El archivo de backup no existe en disco")
-        if _hash_file(archive_path) != info.sha256:
+        try:
+            digest_matches = _hash_file(archive_path) == info.sha256
+        except OSError as exc:
+            raise BackupError("No se pudo leer el archivo de backup") from exc
+        if not digest_matches:
             raise BackupError("El hash del backup no coincide; se rechaza la restauracion")
 
         staging = self._game_dir.parent / f".restore-staging-{int(time.time())}"
-        staging.mkdir(parents=True, exist_ok=True)
+        try:
+            staging.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise BackupError("No se pudo crear el directorio temporal de restauracion") from exc
         try:
             with tarfile.open(archive_path, "r:gz") as archive:
                 _safe_extract_all(archive, staging)
