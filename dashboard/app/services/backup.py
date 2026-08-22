@@ -38,6 +38,7 @@ import calendar
 import hashlib
 import json
 import os
+import shutil
 import tarfile
 import threading
 import time
@@ -310,7 +311,14 @@ class BackupService:
         if not digest_matches:
             raise BackupError("El hash del backup no coincide; se rechaza la restauracion")
 
-        staging = self._game_dir.parent / f".restore-staging-{int(time.time())}"
+        # Staged under _backups_dir - chowned to this container's uid in the
+        # Dockerfile - rather than next to game_dir. game_dir's own PARENT
+        # (DATA_DIR) is never chowned there, only game_dir's contents (via
+        # game-runtime's entrypoint), so creating a new sibling directory
+        # next to game_dir fails with a permission error the dashboard user
+        # can't do anything about. This is the same constraint
+        # installer.py's install/rollback flow stages around.
+        staging = self._backups_dir / f".restore-staging-{int(time.time())}"
         try:
             staging.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -327,10 +335,16 @@ class BackupService:
             _rmtree_ignore(staging)
             raise BackupError("El backup no contiene un directorio 'game' valido")
 
-        if self._game_dir.exists():
-            _rmtree_ignore(self._game_dir)
+        # game_dir itself is a bind-mount point: removing/recreating it (as
+        # a plain rmtree+replace would) fails the same way installer.py's
+        # _clear_directory_contents docstring describes, even though every
+        # file/subdirectory under it is perfectly writable. Only its
+        # contents are cleared, then the restored entries are moved in one
+        # by one - same pattern as installer.py's rollback().
         try:
-            restored_game.replace(self._game_dir)
+            _clear_directory_contents(self._game_dir)
+            for entry in restored_game.iterdir():
+                shutil.move(str(entry), str(self._game_dir / entry.name))
         except OSError as exc:
             _rmtree_ignore(staging)
             raise BackupError("No se pudo reemplazar los archivos del servidor con los del backup") from exc
@@ -429,9 +443,45 @@ def _safe_extract_all(archive: tarfile.TarFile, dest_root: Path) -> None:
 
 
 def _rmtree_ignore(path: Path) -> None:
-    import shutil
-
     shutil.rmtree(path, ignore_errors=True)
+
+
+def _clear_directory_contents(root: Path) -> list[str]:
+    """Deletes everything INSIDE `root` but never `root` itself - a bind
+    mount's top-level directory (the mount point Docker creates for a
+    `${DATA_DIR}/x:/data/x` volume entry) refuses `rmdir` from inside the
+    container even when every file/subdirectory under it is perfectly
+    writable, while clearing its contents one entry at a time works fine.
+    `shutil.rmtree(root)` followed by recreating `root` - what restore() used
+    to do via `Path.replace()` - hits exactly that failure. Same helper as
+    dashboard/app/services/installer.py's and storage.py's, duplicated
+    rather than shared across modules for one short function."""
+    if not root.exists():
+        root.mkdir(parents=True, exist_ok=True)
+        return []
+    warnings: list[str] = []
+    for entry in root.iterdir():
+        try:
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry, onexc=_chmod_and_retry)
+            else:
+                entry.unlink()
+        except OSError as exc:
+            warnings.append(f"No se pudo borrar '{entry.name}': {exc}")
+    return warnings
+
+
+def _chmod_and_retry(func, path, exc) -> None:
+    """`shutil.rmtree(..., onexc=...)` handler - a previous backup restore
+    (or the game process itself) can leave files this process can't unlink
+    outright. Try granting owner rwx once and retrying before giving up.
+    Same helper as installer.py's/storage.py's, duplicated rather than
+    shared across modules for one six-line function."""
+    try:
+        os.chmod(path, 0o700)
+        func(path)
+    except OSError:
+        raise exc from None
 
 
 def _hash_file(path: Path) -> str:

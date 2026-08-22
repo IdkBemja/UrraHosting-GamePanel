@@ -10,11 +10,12 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 - Restaurar un backup ahora muestra un modal con el estado de la restauracion
   (en curso, completada o con error), en vez de dejar al usuario sin ninguna
   indicacion mientras el panel reemplaza los archivos del servidor.
-- Corregido un caso donde restaurar un backup podia fallar con un error 500
-  generico y sin detalle (por ejemplo, si el sistema de archivos no permitia
-  reemplazar los datos del servidor). Ahora, si la restauracion falla, se
-  muestra un mensaje claro junto con la opcion de descargar el reporte del
-  error para soporte tecnico.
+- Corregido un error que hacia fallar la restauracion de backups con un 500
+  generico y sin detalle: el panel intentaba usar una carpeta temporal sin
+  permisos de escritura para preparar la restauracion. Ahora usa una
+  ubicacion valida y, si de todas formas algo falla, muestra un mensaje
+  claro junto con la opcion de descargar el reporte del error para soporte
+  tecnico.
 
 ## [1.2.0] - 2026-08-19
 
