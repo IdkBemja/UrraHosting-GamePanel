@@ -322,7 +322,11 @@ class BackupService:
 
         if self._game_dir.exists():
             _rmtree_ignore(self._game_dir)
-        restored_game.replace(self._game_dir)
+        try:
+            restored_game.replace(self._game_dir)
+        except OSError as exc:
+            _rmtree_ignore(staging)
+            raise BackupError("No se pudo reemplazar los archivos del servidor con los del backup") from exc
         _rmtree_ignore(staging)
 
     def _enforce_retention(self) -> None:

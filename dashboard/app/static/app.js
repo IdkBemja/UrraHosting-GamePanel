@@ -1051,10 +1051,12 @@ installProgressClose?.addEventListener("click", () => installProgressModal.class
 // Shown instead of raw backend error text for the install/rollback flow
 // (installer.py can surface real subprocess output/stack traces there,
 // e.g. a NeoForge OutOfMemoryError trace - useful for support, not for an
-// end user). Other feedback spots in this file (file manager, users,
-// backups) keep their own short, actionable messages as-is; those are
-// normal validation errors, not the kind of technical detail this dialog
-// is for.
+// end user) and for backup creation/restore (a failure there can be an
+// unhandled OS/filesystem-level error with no friendly message at all,
+// e.g. a 500 with an empty body). Other feedback spots in this file (file
+// manager, users, backup settings/delete) keep their own short, actionable
+// messages as-is; those are normal validation errors, not the kind of
+// technical detail this dialog is for.
 const GENERIC_ERROR_MESSAGE = "No se pudo completar la operacion. Descarga el registro o contacta a soporte si el problema persiste.";
 
 const crashModal = document.getElementById("crashModal");
@@ -1446,14 +1448,28 @@ async function restoreBackup(id) {
     "El servidor debe estar detenido. Se reemplazara todo el contenido actual de game/ por el del backup. ¿Continuar?"
   );
   if (!confirmed) return;
-  const { ok, data } = await apiFetch(`/api/backups/${id}/restore`, {
+
+  backupFeedback.textContent = "";
+  backupFeedback.classList.remove("error", "ok");
+  showRestoreProgressModal();
+
+  const { ok, data, status } = await apiFetch(`/api/backups/${id}/restore`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ confirm: true }),
   });
-  backupFeedback.textContent = ok ? "Backup restaurado correctamente." : (data && data.error) || "No se pudo restaurar";
-  backupFeedback.classList.toggle("ok", ok);
-  backupFeedback.classList.toggle("error", !ok);
+
+  if (ok) {
+    const message = "Backup restaurado correctamente.";
+    backupFeedback.textContent = message;
+    backupFeedback.classList.add("ok");
+    hideRestoreProgressModal({ ok: true, message });
+  } else {
+    backupFeedback.textContent = GENERIC_ERROR_MESSAGE;
+    backupFeedback.classList.add("error");
+    hideRestoreProgressModal();
+    showCrashModal(`Restaurar backup (id ${id})`, (data && data.error) || `HTTP ${status}: No se pudo restaurar`);
+  }
   loadOverview();
 }
 
@@ -1531,17 +1547,19 @@ function showBackupProgressModal() {
       stopBackupProgressPolling();
       backupProgressTitle.textContent = data.status === "done" ? "Backup completado" : "El backup fallo";
       if (data.status === "error") {
-        backupProgressMessage.textContent = data.error || "No se pudo crear el backup";
+        backupProgressMessage.textContent = GENERIC_ERROR_MESSAGE;
       }
       if (data.status === "done" && data.skipped && data.skipped.length > 0) {
         backupProgressSkipped.textContent = `Se omitieron ${data.skipped.length} archivo(s) por falta de permisos de lectura. El resto del backup se creo correctamente.`;
         backupProgressSkipped.classList.remove("is-hidden");
       }
       backupProgressClose.classList.remove("is-hidden");
-      backupFeedback.textContent =
-        data.status === "done" ? "Backup creado correctamente." : data.error || "No se pudo crear el backup";
+      backupFeedback.textContent = data.status === "done" ? "Backup creado correctamente." : GENERIC_ERROR_MESSAGE;
       backupFeedback.classList.toggle("ok", data.status === "done");
       backupFeedback.classList.toggle("error", data.status !== "done");
+      if (data.status === "error") {
+        showCrashModal("Crear backup", data.error || "No se pudo crear el backup");
+      }
       loadBackups();
     }
   };
@@ -1550,6 +1568,36 @@ function showBackupProgressModal() {
 }
 
 backupProgressClose?.addEventListener("click", () => backupProgressModal.classList.add("is-hidden"));
+
+/* ---- Backup restore progress modal ---- */
+// The restore endpoint (dashboard/app/blueprints/backups.py) runs
+// synchronously within the request - there's no background job to poll
+// like backup creation has, so this just reflects the in-flight fetch
+// with an indeterminate bar rather than real progress.
+
+const restoreProgressModal = document.getElementById("restoreProgressModal");
+const restoreProgressTitle = document.getElementById("restoreProgressTitle");
+const restoreProgressMessage = document.getElementById("restoreProgressMessage");
+const restoreProgressClose = document.getElementById("restoreProgressClose");
+
+function showRestoreProgressModal() {
+  restoreProgressTitle.textContent = "Restaurando backup";
+  restoreProgressMessage.textContent = "Reemplazando los archivos del servidor...";
+  restoreProgressClose.classList.add("is-hidden");
+  restoreProgressModal.classList.remove("is-hidden");
+}
+
+function hideRestoreProgressModal({ ok, message } = {}) {
+  if (message) {
+    restoreProgressTitle.textContent = ok ? "Backup restaurado" : "La restauracion fallo";
+    restoreProgressMessage.textContent = message;
+    restoreProgressClose.classList.remove("is-hidden");
+  } else {
+    restoreProgressModal.classList.add("is-hidden");
+  }
+}
+
+restoreProgressClose?.addEventListener("click", () => restoreProgressModal.classList.add("is-hidden"));
 
 createBackupButton?.addEventListener("click", async () => {
   backupFeedback.textContent = "";
